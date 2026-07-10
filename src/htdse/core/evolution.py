@@ -1,3 +1,4 @@
+import hashlib
 import pickle
 import warnings
 
@@ -46,9 +47,18 @@ def _check_density_matrix(rho, what="rho0"):
 
 def _reject_dissipative(mechanism, t0, cls_name, alternative="LindbladEvolution"):
     """Closed-system evolutions silently IGNORE jump operators -- so refuse a
-    dissipative mechanism outright instead of producing wrong physics."""
-    jumps = getattr(mechanism, "jump_operators", None)
-    if callable(jumps) and len(jumps(t0)) > 0:
+    dissipative mechanism outright instead of producing wrong physics.
+
+    Sampling `jump_operators(t0)` alone would miss a channel that switches on at
+    t > t0 (a time-dependent coefficient vanishing at t0). A term-layer
+    Hamiltonian declares its channels structurally, so check that registry when
+    it exists; for a hand-written Mechanism, sampling at t0 is all we have."""
+    structural = getattr(mechanism, "jumps", None)
+    dissipative = bool(structural) if isinstance(structural, dict) else False
+    if not dissipative:
+        jumps = getattr(mechanism, "jump_operators", None)
+        dissipative = callable(jumps) and len(jumps(t0)) > 0
+    if dissipative:
         raise ValueError(
             f"{cls_name} solves closed-system dynamics, but {type(mechanism).__name__} "
             f"has jump operators -- its dissipation would be silently ignored. "
@@ -56,17 +66,23 @@ def _reject_dissipative(mechanism, t0, cls_name, alternative="LindbladEvolution"
 
 
 def _snapshot(mechanism):
-    """Byte snapshot of a mechanism's parameters, to detect mutation after
-    binding (the memoized solution would silently be stale physics). Returns
-    None when the state isn't picklable (e.g. lambda coefficients) -- then the
-    guard is skipped and the frozen-after-binding rule is on the caller."""
+    """Digest of a mechanism's parameters, to detect mutation after binding (the
+    memoized solution would silently be stale physics). Returns None when the
+    state isn't picklable (e.g. lambda coefficients) -- then the guard is
+    skipped and the frozen-after-binding rule is on the caller.
+
+    Hashed, not retained: the comparison is against a 16-byte digest rather than
+    a full pickle of (possibly large) array attributes. The pickling itself is
+    the cost, and it is unavoidable if the check is to be sound -- see
+    `check_mutation=False` on the evolution classes to opt out in hot loops."""
     if mechanism is None:
         return None
     try:
-        return pickle.dumps({k: v for k, v in vars(mechanism).items()
-                             if not k.startswith("_")})
+        raw = pickle.dumps({k: v for k, v in vars(mechanism).items()
+                            if not k.startswith("_")})
     except Exception:
         return None
+    return hashlib.blake2b(raw, digest_size=16).digest()
 
 
 # ---------------------------------------------------------------------------
@@ -112,11 +128,17 @@ class _ExtendableSolver:
     Verbosity: `verbose=True/False` per instance, `None` (default) follows
     the package-wide `htdse.quiet()` / `config.VERBOSE` setting. Every real
     integration performed is printed.
+
+    `check_mutation=False` disables the stale-physics guard, which otherwise
+    pickles the mechanism's parameters once per `state_at` call. That costs
+    ~0.3 ms for a mechanism carrying a 200x200 array attribute, so it is worth
+    turning off in an optimizer inner loop -- and only there, since you then own
+    the frozen-after-binding rule yourself.
     """
 
     def __init__(self, rhs, initial: Operator, t0: float = 0.0,
                  rtol=1e-8, atol=1e-10, method="RK45", verbose=None,
-                 mechanism=None, label=None, expm_ok=False):
+                 mechanism=None, label=None, expm_ok=False, check_mutation=True):
         self.rhs = rhs
         self.initial = initial if isinstance(initial, Operator) else Operator(initial)
         self.t0 = t0
@@ -133,8 +155,10 @@ class _ExtendableSolver:
         self._seg_los = None  # ascending t_lo array, rebuilt lazily for lookup
         self._lo_t, self._hi_t = t0, t0
         self._lo_y = self._hi_y = np.asarray(self.initial, dtype=complex).reshape(-1)  # flat state
-        self._mech_state = _snapshot(mechanism)
-        if mechanism is not None and self._mech_state is None and self._verbose:
+        self._check_mutation = bool(check_mutation)
+        self._mech_state = _snapshot(mechanism) if self._check_mutation else None
+        if (self._check_mutation and mechanism is not None
+                and self._mech_state is None and self._verbose):
             print(f"[{self.label}] note: {type(mechanism).__name__} has unpicklable "
                   "parameters (e.g. lambda coefficients), so the stale-physics guard "
                   "is unavailable -- do not mutate it while this evolution is alive.")
@@ -145,7 +169,7 @@ class _ExtendableSolver:
 
     def _check_mechanism_unchanged(self):
         if self._mech_state is None:
-            return  # unpicklable parameters -- guard unavailable, rule is on the caller
+            return  # unpicklable parameters, or opted out -- rule is on the caller
         if _snapshot(self.mechanism) != self._mech_state:
             raise RuntimeError(
                 f"[{self.label}] {type(self.mechanism).__name__}'s parameters changed "
@@ -329,7 +353,12 @@ class HamiltonianEvolution:
         Scalar t -> (dim,); array t -> (n_times, dim)."""
         self._require_ket("adiabatic_populations")
         if np.ndim(t) > 0:
-            return np.array([self.adiabatic_populations(tt) for tt in np.asarray(t)])
+            # one batched state_at (one solve, one mutation check) rather than a
+            # scalar recursion that pays both per time point
+            ts = np.asarray(t)
+            psis = self.state_at(ts)
+            return np.array([np.abs(self.instantaneous_eigenbasis(tt)[1].conj().T @ psi) ** 2
+                             for tt, psi in zip(ts, psis)])
         _, evecs = self.instantaneous_eigenbasis(t)
         psi = self.state_at(t)
         return np.abs(evecs.conj().T @ psi) ** 2  # overlap with each eigenvector
@@ -379,6 +408,10 @@ class UnitaryEvolution:
             if dim is None:
                 raise ValueError("UnitaryEvolution needs either initial or dim")
             initial = Operator(np.eye(dim, dtype=complex))  # U(t0) = I
+        elif dim is not None and np.shape(initial)[0] != dim:
+            raise ValueError(f"UnitaryEvolution got both `initial` (dimension "
+                             f"{np.shape(initial)[0]}) and dim={dim}, which disagree; "
+                             f"`initial` wins, so drop `dim` or make them match")
         initial = initial if isinstance(initial, Operator) else Operator(initial)
         _check_hermitian(mechanism.hamiltonian(t0))
         rhs = _schrodinger_rhs(mechanism, initial.shape)

@@ -144,24 +144,24 @@ class MSMagnus(Mechanism):
         self.subsystems = {f"q{j}": 2 for j in range(self.n_ions)}
         self.subsystems["mode"] = self.n_max + 1
         self._a = annihilation(self.n_max)
-        self._S_cache = None
-        self._S_key = None
+        # sigma_{Phi_j} with Phi = phi + pi/2, embedded on the joint space
+        self._S = [np.asarray(embed(_sigma(phi + np.pi / 2), self.subsystems, f"q{j}"))
+                   for j, phi in enumerate(self.phases)]
+        self._frozen = True  # no attribute may change from here on; see __setattr__
 
-    @property
-    def _S(self):
-        """sigma_{Phi_j} with Phi = phi + pi/2, embedded on the joint space.
-
-        Derived from `phases`, so the cache is keyed on them: baking these at
-        __init__ would leave `unitary()` using stale spin operators while `f()`
-        reads live amplitudes -- two halves of the same gate disagreeing about
-        the parameters."""
-        key = tuple(self.phases)
-        if self._S_cache is None or self._S_key != key:
-            self._S_cache = [np.asarray(embed(_sigma(phi + np.pi / 2),
-                                              self.subsystems, f"q{j}"))
-                             for j, phi in enumerate(key)]
-            self._S_key = key
-        return self._S_cache
+    def __setattr__(self, name, value):
+        """Frozen after construction. `_a`, `subsystems` and `_S` are derived
+        from `n_max`/`participation`/`phases` at __init__, while `f()` reads
+        `amplitudes` and `detune` live -- so a post-hoc attribute assignment
+        would leave the two halves of the same gate disagreeing about the
+        parameters. Keying each derived cache on its inputs is whack-a-mole;
+        this is the rule the class docstring already claims."""
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"MSMagnus is frozen after construction (cannot set {name!r}). "
+                "Its operators are derived from the constructor arguments; "
+                "build a new MSMagnus instead of mutating this one.")
+        object.__setattr__(self, name, value)
 
     # -- drive kernel -------------------------------------------------------
 

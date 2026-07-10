@@ -64,8 +64,10 @@ def pauli_sum(spec: str, n_qubits=None, frame=None, prefix="q") -> Hamiltonian:
     """
     total = Hamiltonian({f"{prefix}{i}": 2 for i in range(n_qubits)}) if n_qubits \
         else Hamiltonian()
-    # normalize "a - b" into "a + -b", then split on "+"
-    normalized = re.sub(r"\s+-\s+", " + -", spec.strip())
+    # Normalize "a - b" and "a -b" into "a + -b", then split on "+". The minus
+    # must be preceded by whitespace to be a subtraction: a '-' with no space
+    # before it is the sigma_minus token ("+0-1").
+    normalized = re.sub(r"\s+-\s*", " + -", spec.strip())
     for piece in normalized.split("+"):
         piece = piece.strip()
         if not piece:
@@ -77,7 +79,14 @@ def pauli_sum(spec: str, n_qubits=None, frame=None, prefix="q") -> Hamiltonian:
         if len(parts) == 1:
             coeff, body = 1.0, parts[0]
         elif len(parts) == 2:
-            coeff, body = float(parts[0]), parts[1]
+            try:
+                coeff = float(parts[0])
+            except ValueError:
+                raise ValueError(
+                    f"could not parse summand {piece!r}: expected "
+                    f"'[coefficient] SPEC' (e.g. '0.5 X0X1'), but {parts[0]!r} "
+                    f"is not a number") from None
+            body = parts[1]
         else:
             raise ValueError(f"could not parse summand {piece!r}")
         total = total + pauli_term(body, coeff=-coeff if neg else coeff,

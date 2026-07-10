@@ -165,21 +165,39 @@ class Hamiltonian(Mechanism):
 
     __radd__ = __add__
 
+    def _reject_jumps(self, op: str):
+        """Scaling/negating/subtracting a DISSIPATIVE model has no agreed
+        meaning: L_k enters the GKSL equation quadratically, so `2*H` would
+        scale coherent terms while leaving rates alone, and `-H` (or `H1 - H2`,
+        which is `H1 + H2*(-1)`) would carry the jumps through unscaled and
+        merge them in -- silently doubling every rate on `h - h`. Rather than
+        pick a convention, refuse. Strip the channels explicitly first."""
+        if self.jumps:
+            raise ValueError(
+                f"cannot {op} a Hamiltonian carrying jump operators "
+                f"{sorted(self.jumps)}: dissipation does not scale with the "
+                f"coherent part, and negation/subtraction would merge the "
+                f"channels in unscaled. Drop them first with "
+                f".without({', '.join(repr(k) for k in sorted(self.jumps))}).")
+
     def __mul__(self, c: Coefficient):
         """Scale every HAMILTONIAN term's coefficient by a scalar or f(t).
-        Jump operators are deliberately untouched -- scaling H is a coherent
-        rescaling and should not change dissipation rates."""
+        Refuses a Hamiltonian carrying jump operators (see `_reject_jumps`)."""
+        self._reject_jumps("scale")
         groups = {k: [term.scaled(c) for term in v] for k, v in self.groups.items()}
         return Hamiltonian(self.subsystems, groups, self.jumps)
 
     __rmul__ = __mul__
 
     def __neg__(self):
+        self._reject_jumps("negate")
         return self * (-1.0)
 
     def __sub__(self, other):
         if not isinstance(other, Hamiltonian):
             return NotImplemented
+        self._reject_jumps("subtract from")
+        other._reject_jumps("subtract")
         return self + (other * (-1.0))
 
     def dag(self) -> "Hamiltonian":
@@ -256,10 +274,15 @@ class Hamiltonian(Mechanism):
 
     def _structure(self):
         """Cheap fingerprint of what `_cache` was built from. Instances are
-        meant to be immutable, but `H.groups["drive"].append(...)` is easy to
-        write and would otherwise keep serving the stale cache."""
-        return (tuple((k, len(v)) for k, v in self.groups.items()),
-                tuple((k, len(v)) for k, v in self.jumps.items()),
+        meant to be immutable, but `H.groups["drive"].append(...)` (or
+        `... [0] = other_term`) is easy to write and would otherwise keep
+        serving the stale cache.
+
+        Identity-level, not value-level: this catches terms added, removed, or
+        swapped, but NOT a Term mutated in place (`t.coeff = ...`), which keeps
+        its id. Rebuild the Hamiltonian rather than edit a Term."""
+        return (tuple((k, tuple(id(t) for t in v)) for k, v in self.groups.items()),
+                tuple((k, tuple(id(t) for t in v)) for k, v in self.jumps.items()),
                 tuple(self.subsystems.items()))
 
     def _materialize(self):
