@@ -15,8 +15,8 @@ every experiment.
 propagator, a density matrix, a state vector — these are all `Operator(np.ndarray)` instances,
 distinguished by role, not by type. Numpy operations always just work on them.
 
-**Hamiltonians are composable, by subsystem name.** The term layer (`htdse.term`) is the
-working representation *above* the dense matrix: a `Hamiltonian` is a sum of named term groups,
+**Hamiltonians are composable, by subsystem name.** The term layer (`htdse.term`) builds them
+as `Model` objects — the working representation *above* the dense matrix. A `Model` is a sum of named term groups,
 each term = coefficient (scalar or `f(t)`) × local operators tagged with named subsystems.
 `+` unions the subsystem registries (same name ⇒ same physical subsystem, enforced) and merges
 the groups; identity-padding and factor ordering are automatic; the joint dense matrix only
@@ -44,7 +44,7 @@ mixing tags warns), and it will not apply approximations (composing the dipole c
 yourself, as above).
 
 **A mechanism is just `params -> H(t)`** (and/or `-> U`, and/or jump operators). A term-layer
-`Hamiltonian` *is* a mechanism; hand-written `Mechanism` subclasses work exactly as before.
+`Model` *is* a mechanism; hand-written `Mechanism` subclasses work exactly as before.
 A mechanism defined only as a gate (analytic Magnus/RWA result) implements `.unitary(t)` and
 is consumed directly by `UnitaryEvolution`/`DensityMatrixEvolution` — no lossy U → H inversion.
 Mechanisms are **frozen once handed to an evolution**: mutating parameters afterwards is
@@ -78,7 +78,7 @@ a scalar t or an array.
 **Hilbert-space mismatches: two explicit adapters, never guessed.** `embed(op, dims, names)`
 lifts an operator into the joint space — including onto several, possibly *non-adjacent*
 factors — and `trace_out`/`partial_trace` (batched over time) brings realized states down.
-Term-layer Hamiltonians carry their own `subsystems` registry, so evolutions and `trace_out`
+Term-layer `Model`s carry their own `subsystems` registry, so evolutions and `trace_out`
 pick it up automatically. `compare_over(ts, target, realized, metric, ...)` runs the
 target-vs-realized loop with explicit metrics (`fidelity`, `process_fidelity`,
 `density_fidelity`) and optional per-side embed/trace adapters.
@@ -88,7 +88,7 @@ target-vs-realized loop with explicit metrics (`fidelity`, `process_fidelity`,
 ```
 htdse/
   src/htdse/
-    core/            # universal: Operator, Mechanism, terms (composable Hamiltonians),
+    core/            # universal: Operator, Mechanism, terms (composable `Model`s),
                      # the four evolution classes, subsystems (embed/partial_trace),
                      # compare_over, plotting, config (quiet)
     submodules/      # reusable physics: spin (Paulis, sigma±, pauli_term/pauli_sum),

@@ -9,7 +9,7 @@ Everything a physicist reaches for interactively is importable from the top:
 from .core.config import quiet
 from .core.operator import Operator
 from .core.mechanism import Mechanism
-from .core.terms import Hamiltonian, term, jump, hconj
+from .core.terms import Model, term, jump, hconj
 from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
                              DensityMatrixEvolution, LindbladEvolution)
 from .core.subsystems import embed, partial_trace
@@ -19,7 +19,7 @@ from .util import (MAG_THRESHOLD, otimes, ket, projector, fidelity,
                    binary_to_index, index_to_binary)
 
 __all__ = [
-    "quiet", "Operator", "Mechanism", "Hamiltonian", "term", "jump", "hconj",
+    "quiet", "Operator", "Mechanism", "Model", "term", "jump", "hconj",
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
     "LindbladEvolution", "embed", "partial_trace", "compare_over",
     "MAG_THRESHOLD", "otimes", "ket", "projector", "fidelity",

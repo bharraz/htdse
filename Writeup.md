@@ -15,8 +15,9 @@ Operator (np.ndarray + metadata)          <- the universal currency: any matrix/
    ^
 Term                                       <- coeff(t) x local ops on NAMED subsystems
    ^
-Hamiltonian (term layer)                   <- named GROUPS of terms + subsystem registry
-   ^                                          (is itself a Mechanism)
+Model (term layer)                         <- named GROUPS of terms + subsystem registry
+   ^                                          (a composed Hamiltonian +/- dissipation;
+                                              is itself a Mechanism)
 Mechanism                                  <- anything with .hamiltonian(t) / .unitary(t)
    ^                                          / .jump_operators(t)
 Evolution classes                          <- lazily solve ONE equation of motion each
@@ -43,7 +44,7 @@ jc    = hconj(term({"spin": sigma_plus, "mode": a},          # GROUP "jc":    2 
 drive = term(0.5 * Om * sigma_x, on="spin", name="drive",    # GROUP "drive": 1 term,
              coeff=lambda t: np.sin(t))                      #   time-dependent
 
-H = atom + mode + jc + drive        # a Hamiltonian: 4 named groups
+H = atom + mode + jc + drive        # a Model: 4 named groups
 #   ^ '+' merges the SUBSYSTEM REGISTRY {"spin": 2, "mode": n_max+1}
 #     (union by NAME; same name must mean same dimension) and the group dicts.
 #     No matrix is built here.
@@ -64,14 +65,20 @@ The vocabulary, bottom-up:
   ket, a density matrix, a propagator are all Operators; they differ by *role*, not type.
 - **Term** (`core/terms.py`) — `coefficient × ⊗(local ops)`, each local op tagged with the
   *name* of the subsystem it acts on. The names are what make composition automatic.
-- **Group** — a named list of terms inside a `Hamiltonian`. Groups exist purely so you can
+- **Group** — a named list of terms inside a `Model`. Groups exist purely so you can
   grab/replace/delete physics wholesale (`H.replace(drive=...)`, `H.without("ld2_q0")`,
   `H.group("jc")`).
-- **Registry** — the `{name: dim}` dict a `Hamiltonian` carries. It defines the canonical
+- **Registry** — the `{name: dim}` dict a `Model` carries. It defines the canonical
   tensor-product order (first appearance) and is handed automatically to evolutions, so
   `trace_out`/`embed` never need a separately-maintained dims dict.
+- **Model** (`core/terms.py`) — the composable object the term layer builds: named groups of
+  terms (a Hamiltonian) plus, optionally, named groups of jump operators (dissipation), over
+  one subsystem registry. It is *not* a matrix — it materializes `H(t)` (aka `.H(t)`) and
+  `jump_operators(t)` on demand, which is what makes it a `Mechanism`. Named for what it is —
+  a model of the system — since a "Hamiltonian" that also carries Lindblad channels would be
+  a misnomer.
 - **Mechanism** (`core/mechanism.py`) — the protocol the evolution layer consumes. A
-  term-layer `Hamiltonian` satisfies it; so does any hand-written class with a
+  term-layer `Model` satisfies it; so does any hand-written class with a
   `.hamiltonian(t)` (and/or `.unitary(t)`, `.jump_operators(t)`).
 
 ---
@@ -301,7 +308,7 @@ $$ H(t) = \sum_j \Omega_j(t)\cos(\mu t)\Big[\underbrace{\sigma_{\phi_j}}_{\text{
 \;-\; \underbrace{\tfrac{\eta^2 b_j^2}{2}\,\sigma_{\phi_j}\big(a^2 e^{-2i\nu t} + a^{\dagger 2} e^{2i\nu t} + 2\hat n + 1\big)}_{\eta^2}\Big] $$
 
 `ms_lamb_dicke1` keeps through $\eta^1$; `ms_lamb_dicke2` through $\eta^2$. Both return
-term-layer Hamiltonians with **per-ion groups** `carrier_qj`, `sdf_qj`, `ld2_qj` — so
+term-layer `Model`s with **per-ion groups** `carrier_qj`, `sdf_qj`, `ld2_qj` — so
 dropping the carrier, miscalibrating one ion, or swapping a drive is a group operation.
 Numerical note: these carry oscillations at μ and 2ν, so the ODE solver has to resolve the
 trap frequency — cost grows with ν·T. That's inherent to simulating pre-RWA physics.

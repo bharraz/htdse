@@ -1,6 +1,6 @@
-"""The composable Hamiltonian layer.
+"""The composable Model layer.
 
-A `Hamiltonian` here is NOT a matrix -- it is a sum of symbolic *terms*, each
+A `Model` here is NOT a matrix -- it is a sum of symbolic *terms*, each
 term being
 
     coefficient (a number, or a callable f(t))  x  local operators on NAMED
@@ -8,7 +8,7 @@ term being
 
 plus a registry {subsystem name: dimension}. The dense matrix on the joint
 space is a *materialization* computed only when an evolution asks for
-`.hamiltonian(t)` -- which makes a `Hamiltonian` a drop-in `Mechanism`.
+`.hamiltonian(t)` -- which makes a `Model` a drop-in `Mechanism`.
 
 Because terms carry subsystem *names*, composition is literal:
 
@@ -128,13 +128,13 @@ def _merge_registry(a: dict, b: dict) -> dict:
     return out
 
 
-class Hamiltonian(Mechanism):
+class Model(Mechanism):
     """A sum of named groups of Terms + a subsystem registry. Satisfies the
     Mechanism protocol (`hamiltonian(t)`, `jump_operators(t)`), so it plugs
     straight into any evolution class.
 
     Treat instances as immutable: every operation (+, *, dag, replace, ...)
-    returns a new Hamiltonian. See the module docstring for the full model.
+    returns a new Model. See the module docstring for the full model.
     """
 
     def __init__(self, subsystems: dict | None = None, groups: dict | None = None,
@@ -150,7 +150,7 @@ class Hamiltonian(Mechanism):
     def __add__(self, other):
         if isinstance(other, (int, float)) and other == 0:
             return self  # so sum([...]) works
-        if not isinstance(other, Hamiltonian):
+        if not isinstance(other, Model):
             return NotImplemented
         subsystems = _merge_registry(self.subsystems, other.subsystems)
         groups = {k: list(v) for k, v in self.groups.items()}
@@ -161,7 +161,7 @@ class Hamiltonian(Mechanism):
         for k, terms in other.jumps.items():
             jumps.setdefault(k, [])
             jumps[k] = jumps[k] + list(terms)
-        return Hamiltonian(subsystems, groups, jumps)
+        return Model(subsystems, groups, jumps)
 
     __radd__ = __add__
 
@@ -174,7 +174,7 @@ class Hamiltonian(Mechanism):
         pick a convention, refuse. Strip the channels explicitly first."""
         if self.jumps:
             raise ValueError(
-                f"cannot {op} a Hamiltonian carrying jump operators "
+                f"cannot {op} a Model carrying jump operators "
                 f"{sorted(self.jumps)}: dissipation does not scale with the "
                 f"coherent part, and negation/subtraction would merge the "
                 f"channels in unscaled. Drop them first with "
@@ -182,10 +182,10 @@ class Hamiltonian(Mechanism):
 
     def __mul__(self, c: Coefficient):
         """Scale every HAMILTONIAN term's coefficient by a scalar or f(t).
-        Refuses a Hamiltonian carrying jump operators (see `_reject_jumps`)."""
+        Refuses a Model carrying jump operators (see `_reject_jumps`)."""
         self._reject_jumps("scale")
         groups = {k: [term.scaled(c) for term in v] for k, v in self.groups.items()}
-        return Hamiltonian(self.subsystems, groups, self.jumps)
+        return Model(self.subsystems, groups, self.jumps)
 
     __rmul__ = __mul__
 
@@ -194,13 +194,13 @@ class Hamiltonian(Mechanism):
         return self * (-1.0)
 
     def __sub__(self, other):
-        if not isinstance(other, Hamiltonian):
+        if not isinstance(other, Model):
             return NotImplemented
         self._reject_jumps("subtract from")
         other._reject_jumps("subtract")
         return self + (other * (-1.0))
 
-    def dag(self) -> "Hamiltonian":
+    def dag(self) -> "Model":
         """Hermitian conjugate of every Hamiltonian term (groups keep their
         names). Handy for writing `H_int + H_int.dag()` for `... + h.c.`
 
@@ -209,14 +209,14 @@ class Hamiltonian(Mechanism):
         the jumps carried through, `hconj(coherent + jump(...))` would merge two
         identical jump dicts and silently double every dissipation rate."""
         groups = {k: [term.dag() for term in v] for k, v in self.groups.items()}
-        return Hamiltonian(self.subsystems, groups)
+        return Model(self.subsystems, groups)
 
-    def replace(self, **named) -> "Hamiltonian":
+    def replace(self, **named) -> "Model":
         """Swap out named term groups wholesale: the composable-error workflow.
 
             realized = model.replace(drive=noisy_drive)
 
-        Each value is a Hamiltonian; ALL its terms (and jumps, and any new
+        Each value is a Model; ALL its terms (and jumps, and any new
         subsystems it introduces) land under the replaced name. The group must
         already exist -- replacing an unknown name is almost always a typo, so
         it raises. To add a group, use `+`; to delete one, use `without()`."""
@@ -227,8 +227,8 @@ class Hamiltonian(Mechanism):
             if name not in groups and name not in jumps:
                 raise KeyError(f"no term group named {name!r}; have "
                                f"{sorted(set(groups) | set(jumps))}")
-            if not isinstance(replacement, Hamiltonian):
-                raise TypeError(f"replacement for {name!r} must be a Hamiltonian")
+            if not isinstance(replacement, Model):
+                raise TypeError(f"replacement for {name!r} must be a Model")
             subsystems = _merge_registry(subsystems, replacement.subsystems)
             groups[name] = [t for terms in replacement.groups.values() for t in terms]
             if not groups[name]:
@@ -238,20 +238,20 @@ class Hamiltonian(Mechanism):
                 jumps[name] = new_jumps
             elif name in jumps:
                 del jumps[name]
-        return Hamiltonian(subsystems, groups, jumps)
+        return Model(subsystems, groups, jumps)
 
-    def without(self, *names) -> "Hamiltonian":
+    def without(self, *names) -> "Model":
         """Drop named term groups (from both H terms and jumps)."""
         for name in names:
             if name not in self.groups and name not in self.jumps:
                 raise KeyError(f"no term group named {name!r}")
         groups = {k: v for k, v in self.groups.items() if k not in names}
         jumps = {k: v for k, v in self.jumps.items() if k not in names}
-        return Hamiltonian(self.subsystems, groups, jumps)
+        return Model(self.subsystems, groups, jumps)
 
-    def group(self, name) -> "Hamiltonian":
-        """Extract one named group as its own Hamiltonian (same registry)."""
-        out = Hamiltonian(self.subsystems)
+    def group(self, name) -> "Model":
+        """Extract one named group as its own Model (same registry)."""
+        out = Model(self.subsystems)
         if name in self.groups:
             out.groups[name] = list(self.groups[name])
         if name in self.jumps:
@@ -280,7 +280,7 @@ class Hamiltonian(Mechanism):
 
         Identity-level, not value-level: this catches terms added, removed, or
         swapped, but NOT a Term mutated in place (`t.coeff = ...`), which keeps
-        its id. Rebuild the Hamiltonian rather than edit a Term."""
+        its id. Rebuild the Model rather than edit a Term."""
         return (tuple((k, tuple(id(t) for t in v)) for k, v in self.groups.items()),
                 tuple((k, tuple(id(t) for t in v)) for k, v in self.jumps.items()),
                 tuple(self.subsystems.items()))
@@ -295,7 +295,7 @@ class Hamiltonian(Mechanism):
                   for t in terms if t.frame is not None}
         if len(frames) > 1:
             warnings.warn(f"composing terms tagged with different frames {sorted(frames)} "
-                          "-- literal addition of Hamiltonians written in different "
+                          "-- literal addition of Models written in different "
                           "frames is not physically meaningful", stacklevel=3)
         static = np.zeros((self.dim, self.dim), dtype=complex)
         dynamic = []
@@ -342,7 +342,7 @@ class Hamiltonian(Mechanism):
         parts = [f"subsystems=({subs})", f"terms=({gs})"]
         if js:
             parts.append(f"jumps=({js})")
-        return f"Hamiltonian({', '.join(parts)})"
+        return f"Model({', '.join(parts)})"
 
 
 def _build_ops_and_dims(op, on, dims):
@@ -371,8 +371,8 @@ def _build_ops_and_dims(op, on, dims):
 
 
 def term(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
-         frame: str | None = None, dims: dict | None = None) -> Hamiltonian:
-    """Build a one-term Hamiltonian -- the atom everything composes from.
+         frame: str | None = None, dims: dict | None = None) -> Model:
+    """Build a one-term Model -- the atom everything composes from.
 
     op:    a matrix (with `on=` naming its subsystem), or a dict
            {name: matrix} for a product across several subsystems
@@ -382,17 +382,17 @@ def term(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     name:  the term-group name -- the handle `replace()` swaps by. Unnamed
            terms get a unique auto-name (composable, but not swappable).
     frame: optional tag ("lab", "rotating@w0", ...); mixing distinct tags in
-           one Hamiltonian warns at materialization.
+           one Model warns at materialization.
     """
     ops, term_dims = _build_ops_and_dims(op, on, dims)
     key = name if name is not None else f"term{next(_anon_counter)}"
     t = Term(coeff, ops, term_dims, frame)
-    return Hamiltonian(term_dims, groups={key: [t]})
+    return Model(term_dims, groups={key: [t]})
 
 
 def jump(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
-         dims: dict | None = None) -> Hamiltonian:
-    """Build a Hamiltonian carrying one Lindblad jump operator (and no
+         dims: dict | None = None) -> Model:
+    """Build a Model carrying one Lindblad jump operator (and no
     coherent term). The materialized L is coeff * (embedded op) -- keep the
     sqrt(rate) convention: pass coeff=np.sqrt(gamma).
 
@@ -401,10 +401,10 @@ def jump(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     ops, term_dims = _build_ops_and_dims(op, on, dims)
     key = name if name is not None else f"jump{next(_anon_counter)}"
     t = Term(coeff, ops, term_dims, None)
-    return Hamiltonian(term_dims, jumps={key: [t]})
+    return Model(term_dims, jumps={key: [t]})
 
 
-def hconj(h: Hamiltonian) -> Hamiltonian:
+def hconj(h: Model) -> Model:
     """h + h.dag() -- the ubiquitous `X + h.c.` pattern in one call.
 
     Any jump operators on `h` ride through exactly once (see `dag`): only the

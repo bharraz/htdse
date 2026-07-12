@@ -51,7 +51,7 @@ def _reject_dissipative(mechanism, t0, cls_name, alternative="LindbladEvolution"
 
     Sampling `jump_operators(t0)` alone would miss a channel that switches on at
     t > t0 (a time-dependent coefficient vanishing at t0). A term-layer
-    Hamiltonian declares its channels structurally, so check that registry when
+    Model declares its channels structurally, so check that registry when
     it exists; for a hand-written Mechanism, sampling at t0 is all we have."""
     structural = getattr(mechanism, "jumps", None)
     dissipative = bool(structural) if isinstance(structural, dict) else False
@@ -277,7 +277,7 @@ def _schrodinger_rhs(mechanism, shape):
 
 def _default_subsystems(mechanism, subsystems):
     """Explicit `subsystems=` wins; otherwise a mechanism that knows its own
-    tensor structure (e.g. a term-layer Hamiltonian) supplies it."""
+    tensor structure (e.g. a term-layer Model) supplies it."""
     if subsystems is not None:
         return dict(subsystems)
     return dict(getattr(mechanism, "subsystems", {}) or {})
@@ -293,7 +293,7 @@ class HamiltonianEvolution:
     `subsystems`: ordered {name: dim} of this state's tensor factors, needed
     by `trace_out`. Order must match how `initial` was built (e.g. via
     `otimes`). Defaults to the mechanism's own `.subsystems` when it has one
-    (term-layer Hamiltonians always do).
+    (term-layer Models always do).
 
     Every time-parametrized method accepts a scalar t or an array of times.
     """

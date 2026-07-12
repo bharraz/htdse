@@ -9,7 +9,7 @@ import re
 
 import numpy as np
 
-from ..core.terms import Hamiltonian, term
+from ..core.terms import Model, term
 
 # Pauli matrices and identity for the spin-1/2 sector.
 sigma_x = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -27,8 +27,8 @@ _TOKEN = re.compile(r"([XYZI+\-])(\d+)")
 
 
 def pauli_term(spec: str, coeff=1.0, name=None, n_qubits=None,
-               frame=None, prefix="q") -> Hamiltonian:
-    """One product of single-qubit Paulis as a composable term-layer Hamiltonian.
+               frame=None, prefix="q") -> Model:
+    """One product of single-qubit Paulis as a composable term-layer `Model`.
 
     spec: e.g. "X0X1" (sigma_x on qubits 0 and 1), "Z2", "+0-1". Qubit i
     becomes subsystem "q{i}", so pauli terms compose with anything else by
@@ -48,22 +48,22 @@ def pauli_term(spec: str, coeff=1.0, name=None, n_qubits=None,
     h = term(ops, coeff=coeff, name=name, frame=frame)
     if n_qubits is not None:
         # widen the registry with untouched qubits (identity there)
-        h = h + Hamiltonian({f"{prefix}{i}": 2 for i in range(n_qubits)})
+        h = h + Model({f"{prefix}{i}": 2 for i in range(n_qubits)})
     return h
 
 
-def pauli_sum(spec: str, n_qubits=None, frame=None, prefix="q") -> Hamiltonian:
+def pauli_sum(spec: str, n_qubits=None, frame=None, prefix="q") -> Model:
     """A sum of Pauli terms from one human-readable string:
 
         pauli_sum("0.5 X0X1 + 0.3 Z0 - Z1")
 
     Each summand is "[coefficient] SPEC" (coefficient defaults to 1); the
-    result is an ordinary composable Hamiltonian (each summand its own
+    result is an ordinary composable `Model` (each summand its own
     auto-named group). For swappable groups build the summands individually
     with pauli_term(..., name=...) and `+` them.
     """
-    total = Hamiltonian({f"{prefix}{i}": 2 for i in range(n_qubits)}) if n_qubits \
-        else Hamiltonian()
+    total = Model({f"{prefix}{i}": 2 for i in range(n_qubits)}) if n_qubits \
+        else Model()
     # Normalize "a - b" and "a -b" into "a + -b", then split on "+". The minus
     # must be preceded by whitespace to be a subtraction: a '-' with no space
     # before it is the sigma_minus token ("+0-1").

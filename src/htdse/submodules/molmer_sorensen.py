@@ -45,7 +45,7 @@ tests to ~1e-6 process fidelity between MSMagnus and the ODE-solved rwa=True
 builder). Note all eta^2 terms oscillate fast (mu, mu +- 2nu); their effect is
 an off-resonant correction, which is exactly why you simulate them.
 
-The builders return term-layer `Hamiltonian`s with named groups per ion
+The builders return term-layer `Model`s with named groups per ion
 ("carrier_q0", "sdf_q0", "ld2_q0", ...), so error injection is composition:
 
     H = ms_lamb_dicke1(...) + pauli_term("Z0", coeff=eps_z)     # static sigma_z error
@@ -57,7 +57,7 @@ from scipy.linalg import expm
 from ..core.mechanism import Mechanism
 from ..core.operator import Operator
 from ..core.subsystems import embed
-from ..core.terms import Hamiltonian, hconj, term
+from ..core.terms import Model, hconj, term
 from .harmonic_oscillator import annihilation
 from .spin import sigma_x, sigma_y
 
@@ -277,7 +277,7 @@ def _ms_lamb_dicke(participation, eta, detune, amplitudes, phases, n_max, nu,
         raise ValueError("pre-RWA builders need the trap frequency nu")
     mu = (nu + detune) if nu is not None else None
 
-    H = Hamiltonian({**{f"{prefix}{j}": 2 for j in range(N)}, mode: n_max + 1})
+    H = Model({**{f"{prefix}{j}": 2 for j in range(N)}, mode: n_max + 1})
     for j in range(N):
         b, Omj, phj = participation[j], Om[j], ph[j]
         q = f"{prefix}{j}"
@@ -327,9 +327,9 @@ def _ms_lamb_dicke(participation, eta, detune, amplitudes, phases, n_max, nu,
 
 
 def ms_lamb_dicke1(participation, eta, detune, amplitudes, phases, n_max,
-                   nu=None, rwa=False, prefix="q", mode="mode") -> Hamiltonian:
+                   nu=None, rwa=False, prefix="q", mode="mode") -> Model:
     """MS Hamiltonian truncated at FIRST order in the Lamb-Dicke expansion,
-    as a composable term-layer Hamiltonian (groups: carrier_qj, sdf_qj).
+    as a composable term-layer `Model` (groups: carrier_qj, sdf_qj).
 
     rwa=False (default): pre-RWA -- keeps the off-resonant carrier and the
     counter-rotating spin-motion terms (needs `nu`). rwa=True: drops them,
@@ -341,7 +341,7 @@ def ms_lamb_dicke1(participation, eta, detune, amplitudes, phases, n_max,
 
 
 def ms_lamb_dicke2(participation, eta, detune, amplitudes, phases, n_max,
-                   nu=None, prefix="q", mode="mode") -> Hamiltonian:
+                   nu=None, prefix="q", mode="mode") -> Model:
     """MS Hamiltonian truncated at SECOND order in the Lamb-Dicke expansion
     (adds groups ld2_qj: the a^2/a^dag^2 and (2n+1) corrections). Pre-RWA by
     construction -- every eta^2 term oscillates fast (mu, mu +- 2nu), so under

@@ -12,7 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import htdse as ht
-from htdse import (Operator, Mechanism, Hamiltonian, term, jump, hconj,
+from htdse import (Operator, Mechanism, Model, term, jump, hconj,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, embed, partial_trace, compare_over,
                    otimes, ket, fidelity, process_fidelity, density_fidelity, quiet)

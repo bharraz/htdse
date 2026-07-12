@@ -50,6 +50,11 @@ class Mechanism:
     def hamiltonian(self, t: float) -> Operator:
         raise NotImplementedError(f"{type(self).__name__} has no .hamiltonian(t)")
 
+    def H(self, t: float) -> Operator:
+        """Alias for `hamiltonian(t)` -- H(t), the way it is written on paper.
+        Dispatches to whatever `hamiltonian` the mechanism implements."""
+        return self.hamiltonian(t)
+
     def unitary(self, t: Optional[float] = None) -> Operator:
         raise NotImplementedError(f"{type(self).__name__} has no .unitary(t)")
 
