@@ -59,27 +59,48 @@ H_real = H.replace(drive=noisy_drive)   # groups are SWAP HANDLES: same model,
                                         # target-vs-realized workflow)
 ```
 
-The vocabulary, bottom-up:
+The vocabulary. Read these six definitions once, in order — every later section assumes
+them. They are illustrated against the driven Jaynes–Cummings example above.
 
-- **Operator** (`core/operator.py`) — an `np.ndarray` subclass. A Hamiltonian matrix, a
-  ket, a density matrix, a propagator are all Operators; they differ by *role*, not type.
-- **Term** (`core/terms.py`) — `coefficient × ⊗(local ops)`, each local op tagged with the
-  *name* of the subsystem it acts on. The names are what make composition automatic.
-- **Group** — a named list of terms inside a `Model`. Groups exist purely so you can
-  grab/replace/delete physics wholesale (`H.replace(drive=...)`, `H.without("ld2_q0")`,
-  `H.group("jc")`).
-- **Registry** — the `{name: dim}` dict a `Model` carries. It defines the canonical
-  tensor-product order (first appearance) and is handed automatically to evolutions, so
-  `trace_out`/`embed` never need a separately-maintained dims dict.
-- **Model** (`core/terms.py`) — the composable object the term layer builds: named groups of
-  terms (a Hamiltonian) plus, optionally, named groups of jump operators (dissipation), over
-  one subsystem registry. It is *not* a matrix — it materializes `H(t)` (aka `.H(t)`) and
-  `jump_operators(t)` on demand, which is what makes it a `Mechanism`. Named for what it is —
-  a model of the system — since a "Hamiltonian" that also carries Lindblad channels would be
-  a misnomer.
-- **Mechanism** (`core/mechanism.py`) — the protocol the evolution layer consumes. A
-  term-layer `Model` satisfies it; so does any hand-written class with a
-  `.hamiltonian(t)` (and/or `.unitary(t)`, `.jump_operators(t)`).
+- **Subsystem** — *one named physical factor of the Hilbert space*, e.g. `"spin"` (dim 2) or
+  `"mode"` (dim `n_max+1`). A subsystem is just a `(name, dimension)` pair. The **name** is the
+  load-bearing idea in the whole package: two operators tagged with the same name act on the
+  same physical factor, so `+` knows how to line them up and tensor-pad — you never write a
+  `⊗ I` by hand. The full space is the tensor product of all the distinct subsystems that
+  appear (`spin ⊗ mode`, here dim `2(n_max+1)`).
+
+- **Operator** (`core/operator.py`) — *a matrix or vector* (an `np.ndarray` subclass). A
+  Hamiltonian matrix, a ket, a density matrix, a propagator are all Operators; they differ by
+  *role*, not type. This is the concrete numerical currency, one level below the named layer.
+
+- **Term** (`core/terms.py`) — *one product*: a coefficient (a number, or a callable `f(t)`)
+  times local operators, each tagged with the **subsystem name** it acts on. `atom` above is
+  one term (`½ω₀·σ_z` on `"spin"`); `jc` is two (the coupling and its h.c.). A term names only
+  the subsystems it touches — it stays small; identity on everything else is implicit.
+
+- **Group** — *a named bundle of terms* inside a `Model`, so you can grab/replace/delete a
+  piece of physics wholesale. `atom`, `mode`, `jc`, `drive` above are four groups; the group
+  name is the handle for `H.replace(drive=…)`, `H.without("ld2_q0")`, `H.group("jc")`.
+
+- **Registry** — *the `{name: dimension}` map* a `Model` carries — the set of subsystems it
+  spans. It fixes the canonical tensor-product order (order of first appearance) and rides
+  along to evolutions automatically, so `trace_out`/`embed` never need a separate dims dict.
+
+- **Model** (`core/terms.py`) — *the whole composed object* the term layer builds: named
+  **groups** of terms (a Hamiltonian) plus, optionally, named groups of jump operators
+  (dissipation), over one **registry** of subsystems. It is *not* a matrix — it materializes
+  `H(t)` (aka `.H(t)`) and `jump_operators(t)` on demand, which is what makes it a
+  **Mechanism**. Named for what it *is* — a model of the system — since a "Hamiltonian" that
+  also carries Lindblad channels would be a misnomer.
+
+- **Mechanism** (`core/mechanism.py`) — *the interface the evolution layer consumes*: anything
+  answering `.hamiltonian(t)` (and/or `.unitary(t)`, `.jump_operators(t)`). A term-layer
+  `Model` is one; a hand-written class (e.g. `MSMagnus`) is another.
+
+In one sentence: **terms** (coeff × local ops on named **subsystems**) are bundled into named
+**groups**, which together with a **registry** of subsystems make a **Model**, which is one
+kind of **Mechanism** that an **evolution** integrates — and every level is made of, or
+produces, **Operators**.
 
 ---
 

@@ -15,6 +15,20 @@ every experiment.
 propagator, a density matrix, a state vector — these are all `Operator(np.ndarray)` instances,
 distinguished by role, not by type. Numpy operations always just work on them.
 
+**Five words, defined once** (bottom-up — the composition rules below rely on all five):
+
+- **subsystem** — a named physical factor of the Hilbert space, e.g. `"spin"` (dim 2) or
+  `"mode"` (dim `n_max+1`). Just a `(name, dimension)` pair; the *name* is what lets pieces
+  line up automatically.
+- **term** — one product: a coefficient (number or `f(t)`) × local operators, each tagged with
+  the **subsystem** name it acts on (e.g. `½ω₀·σ_z` on `"spin"`).
+- **group** — a *named* bundle of terms you can swap or drop as a unit (`atom`, `jc`, `drive`…).
+- **registry** — the `{name: dimension}` map of all subsystems a model spans; fixes tensor
+  order and rides along to evolutions automatically.
+- **Model** — the whole composed object: named **groups** of terms (± jump operators) over one
+  **registry**. Not a matrix — it produces `H(t)` on demand, which makes it a **mechanism**
+  (the thing an evolution integrates).
+
 **Hamiltonians are composable, by subsystem name.** The term layer (`htdse.term`) builds them
 as `Model` objects — the working representation *above* the dense matrix. A `Model` is a sum of named term groups,
 each term = coefficient (scalar or `f(t)`) × local operators tagged with named subsystems.
