@@ -386,4 +386,103 @@ try:
 except ValueError:
     check("magnus refuses order > 2 rather than silently truncating", True)
 
+print("== sparse: embed ==")
+from scipy import sparse as sp
+
+# sparse embed == dense embed, including the non-adjacent permutation path
+for dims_s, inv in [({"A": 2, "B": 3, "C": 2}, ("A", "C")),
+                    ({"A": 2, "B": 3, "C": 2}, ("C", "A")),      # reversed order
+                    ({"A": 2, "B": 2, "C": 3, "D": 2}, ("D", "B")),
+                    ({"A": 3, "B": 2}, ("B",)),
+                    ({"A": 2, "B": 3}, ("A", "B"))]:
+    d_i = int(np.prod([dims_s[n] for n in inv]))
+    M = rng.normal(size=(d_i, d_i)) + 1j * rng.normal(size=(d_i, d_i))
+    dense_e = np.asarray(embed(M, dims_s, inv))
+    sparse_e = embed(sp.csr_matrix(M), dims_s, inv)
+    check(f"sparse embed == dense embed on {inv} of {list(dims_s)}",
+          sp.issparse(sparse_e) and np.allclose(sparse_e.toarray(), dense_e))
+
+print("== sparse: Model materialization + flag propagation ==")
+Hs = H.sparse()  # the JC model from above
+check("sparse hamiltonian is CSR", sp.issparse(Hs.hamiltonian(0.0)))
+check("sparse H(t) == dense H(t)",
+      np.allclose(Hs.hamiltonian(0.0).toarray(), np.asarray(H.hamiltonian(0.0))))
+Hs_td = (H + term(sigma_x, on="spin", coeff=lambda t: np.cos(0.7 * t), name="dr")).sparse()
+H_td = H + term(sigma_x, on="spin", coeff=lambda t: np.cos(0.7 * t), name="dr")
+check("sparse time-dependent H(t) == dense",
+      all(np.allclose(Hs_td.hamiltonian(tt).toarray(), np.asarray(H_td.hamiltonian(tt)))
+          for tt in [0.0, 0.3, 1.7]))
+
+check("sparse flag sticky under +", (Hs + term(nop, on="mode")).is_sparse)
+check("sparse flag sticky under + (other side)", (atom + mode.sparse()).is_sparse)
+check("sparse flag survives *, -, dag, hconj, replace, without, group",
+      (2.0 * Hs).is_sparse and (Hs - atom).is_sparse and Hs.dag().is_sparse
+      and hconj(Hs).is_sparse
+      and (atom + drive).sparse().replace(drive=noisy).is_sparse
+      and Hs.without("jc").is_sparse and Hs.group("atom").is_sparse)
+check("sparse(False) toggles back to dense Operator",
+      not Hs.sparse(False).is_sparse
+      and isinstance(Hs.sparse(False).hamiltonian(0.0), Operator))
+check("repr shows sparse", "sparse" in repr(Hs))
+
+open_s = open_model.sparse()
+Ls_sparse = open_s.jump_operators(0.0)
+check("sparse jump_operators are CSR and match dense",
+      all(sp.issparse(L) for L in Ls_sparse)
+      and np.allclose(Ls_sparse[0].toarray(), np.asarray(Ls[0])))
+
+print("== sparse: evolutions match dense ==")
+with quiet():
+    ev_s = HamiltonianEvolution(Hs, psi0)
+    psis_s = ev_s.state_at(ts)
+check("sparse HamiltonianEvolution == dense trajectory",
+      np.allclose(np.asarray(psis_s), np.asarray(psis_t), atol=1e-6))
+check("sparse evolution picked up subsystems",
+      ev_s.subsystems == {"spin": 2, "mode": n_max + 1})
+with quiet():
+    rho_spin_s = ev_s.trace_out("mode", t=ts[:5])
+check("trace_out works on sparse-model evolution",
+      np.allclose(np.asarray(rho_spin_s), np.asarray(rho_spin)[:5], atol=1e-6))
+
+with quiet():
+    U_d = UnitaryEvolution(H_td, dim=H.dim).unitary_at(1.3)
+    U_s = UnitaryEvolution(Hs_td, dim=H.dim).unitary_at(1.3)
+check("sparse UnitaryEvolution == dense", np.allclose(np.asarray(U_s), np.asarray(U_d), atol=1e-6))
+
+# Trotter over a sparse model exercises the expm_multiply (no dense eigh) path
+ramp_model = (term(sigma_x, on="q", coeff=lambda t: 1 - np.clip(t / T, 0, 1), name="x")
+              + term(sigma_z, on="q", coeff=lambda t: np.clip(t / T, 0, 1), name="z"))
+with quiet():
+    trot_d = HamiltonianEvolution(TrotterizedMechanism(ramp_model, 0, T, 40),
+                                  Operator(ket("0"))).state_at(T)
+    trot_s = HamiltonianEvolution(TrotterizedMechanism(ramp_model.sparse(), 0, T, 40),
+                                  Operator(ket("0"))).state_at(T)
+check("sparse expm_multiply path == dense eigh path",
+      np.allclose(np.asarray(trot_s), np.asarray(trot_d), atol=1e-10))
+with quiet():
+    Uev_s = UnitaryEvolution(TrotterizedMechanism(ramp_model.sparse(), 0, T, 40), dim=2)
+    _ = Uev_s.unitary_at(T)
+check("sparse expm path unitarity defect tiny", Uev_s.unitarity_defect(T) < 1e-10)
+
+with quiet():
+    lev_s = LindbladEvolution(open_s, Operator(rho0_j))
+    rho_T_s = lev_s.state_at(3.0)
+check("sparse LindbladEvolution == dense",
+      np.allclose(np.asarray(rho_T_s), np.asarray(rho_T), atol=1e-7))
+
+# guards still fire through the sparse path
+try:
+    with quiet():
+        HamiltonianEvolution(term(np.array([[0, 1], [0, 0]], dtype=complex),
+                                  on="q").sparse(), Operator(ket("0")))
+    check("non-Hermitian sparse H rejected", False)
+except ValueError:
+    check("non-Hermitian sparse H rejected", True)
+try:
+    with quiet():
+        HamiltonianEvolution(open_s, Operator(np.kron(ket("0"), fock(0, n_max))))
+    check("dissipative sparse model rejected by closed-system class", False)
+except ValueError:
+    check("dissipative sparse model rejected by closed-system class", True)
+
 print(f"\nALL {len(PASS)} CHECKS PASSED")

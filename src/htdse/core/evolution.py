@@ -3,7 +3,9 @@ import pickle
 import warnings
 
 import numpy as np
+from scipy import sparse as _sp
 from scipy.integrate import solve_ivp
+from scipy.sparse.linalg import expm_multiply
 
 from . import config
 from .mechanism import provides_hamiltonian, provides_unitary
@@ -15,9 +17,24 @@ from ..util import MAG_THRESHOLD
 # validity checks -- catch the silent-wrong failure modes at construction time
 # ---------------------------------------------------------------------------
 
+def _dense(H) -> np.ndarray:
+    """Densify a possibly-sparse operator (sparse mechanisms hand out CSR)."""
+    return H.toarray() if _sp.issparse(H) else np.asarray(H)
+
+
 def _check_hermitian(H, what="H(t0)"):
     """A non-Hermitian generator gives non-unitary dynamics that just looks
-    like mysterious decay -- the most common user sign error. Cheap to catch."""
+    like mysterious decay -- the most common user sign error. Cheap to catch.
+    Works on dense and scipy-sparse H alike (the sparse branch never densifies:
+    abs/max/subtraction all stay sparse)."""
+    if _sp.issparse(H):
+        scale = max(1.0, abs(H).max() if H.nnz else 0.0)
+        diff = H - H.conj().T
+        defect = abs(diff).max() if diff.nnz else 0.0
+        if defect > MAG_THRESHOLD * scale:
+            raise ValueError(f"{what} is not Hermitian (max |H - H^dag| = {defect:.3g}). "
+                             "Check the mechanism for a sign/conjugation error.")
+        return
     H = np.asarray(H)
     scale = max(1.0, np.max(np.abs(H)))
     defect = np.max(np.abs(H - H.conj().T))
@@ -103,6 +120,28 @@ class _EighSegment:
     def __call__(self, t):
         phases = np.exp(-1j * self._E * (t - self._t0))
         return (self._V @ (phases[:, None] * self._C)).reshape(-1)
+
+
+class _ExpmSegment:
+    """Sparse counterpart of `_EighSegment`: exact propagation over one
+    interval of CONSTANT Hermitian H, y(t) = exp(-i H (t - t_start)) y0,
+    computed by `scipy.sparse.linalg.expm_multiply` -- the *action* of the
+    matrix exponential on the state, never the (dense) exponential itself.
+
+    Trade-off vs. eigh: eigh pays O(d^3) once per interval and answers any t
+    for O(d^2); expm_multiply pays per *query* but stays O(nnz)-ish in memory,
+    which is the whole point at dimensions where a dense d x d never fits."""
+
+    def __init__(self, H, t_start, y0_flat, state_dim):
+        self._A = (-1j) * H.tocsc()  # csc: what expm_multiply factorizes fastest
+        self._t0 = t_start
+        self._y0 = y0_flat.reshape(state_dim, -1)
+
+    def __call__(self, t):
+        dt = t - self._t0
+        if dt == 0:
+            return self._y0.reshape(-1).copy()
+        return np.asarray(expm_multiply(self._A * dt, self._y0)).reshape(-1)
 
 
 class _ExtendableSolver:
@@ -191,6 +230,8 @@ class _ExtendableSolver:
                 print(f"[{self.label}] expm-propagating {self.mechanism!r}: "
                       f"t={t_start:.6g} -> {t_end:.6g} (piecewise-constant H, exact)")
             H = self.mechanism.hamiltonian((t_start + t_end) / 2)  # constant on interval
+            if _sp.issparse(H):  # sparse mechanism: exponential action, no dense eigh
+                return _ExpmSegment(H, t_start, y_start, self.initial.shape[0])
             return _EighSegment(H, t_start, y_start, self.initial.shape[0])
         if self._verbose:
             print(f"[{self.label}] integrating {self.mechanism!r}: "
@@ -268,8 +309,12 @@ def _schrodinger_rhs(mechanism, shape):
     """dX/dt = -i H(t) X, for X a ket (d,) or an operator (d,d)."""
     def rhs(t, y_flat):
         # plain ndarray: every Operator result would copy a params dict, and this
-        # runs once per integrator function evaluation
-        H = np.asarray(mechanism.hamiltonian(t))
+        # runs once per integrator function evaluation. A sparse H is kept
+        # sparse -- csr @ dense returns a dense ndarray, which is all the ODE
+        # solver ever sees.
+        H = mechanism.hamiltonian(t)
+        if not _sp.issparse(H):
+            H = np.asarray(H)
         X = y_flat.reshape(shape)
         return (-1j * (H @ X)).reshape(-1)  # -i H X, flattened for the ODE solver
     return rhs
@@ -344,7 +389,10 @@ class HamiltonianEvolution:
         basis within the degenerate subspace are arbitrary, so per-level
         quantities can jump discontinuously exactly where gaps close.
         """
-        H = self.mechanism.hamiltonian(t)
+        # densified even for a sparse mechanism: a full eigendecomposition is
+        # inherently dense (O(d^2) memory) -- fine as a diagnostic at moderate
+        # dim, not something to call at dimensions only sparse can evolve
+        H = _dense(self.mechanism.hamiltonian(t))
         return np.linalg.eigh(H)  # Hermitian eigendecomposition, ascending order
 
     def adiabatic_populations(self, t) -> np.ndarray:
@@ -484,10 +532,16 @@ def _lindblad_rhs(mechanism, dim):
     """d(rho)/dt = -i[H(t),rho] + sum_k ( L_k rho L_k^dagger - 1/2{L_k^dagger L_k, rho} )."""
     def rhs(t, y_flat):
         rho = y_flat.reshape(dim, dim)
-        H = np.asarray(mechanism.hamiltonian(t))
+        # rho stays dense (it is generically full); sparse H / L only speed up
+        # the products against it (sparse @ dense and dense @ sparse both
+        # return dense ndarrays).
+        H = mechanism.hamiltonian(t)
+        if not _sp.issparse(H):
+            H = np.asarray(H)
         drho = -1j * (H @ rho - rho @ H)  # coherent part: -i[H, rho]
         for L in mechanism.jump_operators(t):
-            L = np.asarray(L)
+            if not _sp.issparse(L):
+                L = np.asarray(L)
             Ld = L.conj().T
             LdL = Ld @ L  # once, not once per anticommutator half
             drho += L @ rho @ Ld - 0.5 * (LdL @ rho + rho @ LdL)  # dissipator D[L]

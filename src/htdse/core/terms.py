@@ -27,6 +27,13 @@ Named groups are the swap-out handle:
     model    = atom + mode + term(..., name="drive")
     realized = model.replace(drive=noisy_drive)   # same model, one entry swapped
 
+Storage is a toggle, not a type: `H.sparse()` returns the same Model flagged
+to materialize as scipy CSR matrices -- `hamiltonian(t)` / `jump_operators(t)`
+then return sparse matrices and the evolution classes switch to sparse
+matrix-vector products automatically. Worth it once the joint dimension
+reaches a few thousand (many ions / large Fock truncations); below that,
+dense is as fast or faster. The flag is sticky under composition.
+
 Physics caveats the framework cannot check for you:
 - Addition is literal. All terms must be written in the same frame (lab vs.
   rotating); terms may carry a `frame` tag and mixing distinct tags warns.
@@ -40,6 +47,7 @@ import warnings
 from typing import Callable, Union
 
 import numpy as np
+from scipy import sparse as _sp
 
 from .mechanism import Mechanism
 from .operator import Operator
@@ -80,10 +88,16 @@ class Term:
     def involved(self) -> tuple:
         return tuple(n for key in self.ops for n in key)
 
-    def local_matrix(self) -> np.ndarray:
+    def local_matrix(self, sparse: bool = False):
         """Kronecker product of this term's ops, in their stated order --
-        the operator on just the subsystems the term touches."""
+        the operator on just the subsystems the term touches. `sparse=True`
+        returns a scipy CSR matrix (kron chain stays sparse throughout)."""
         mats = list(self.ops.values())
+        if sparse:
+            out = _sp.csr_matrix(mats[0])
+            for m in mats[1:]:
+                out = _sp.kron(out, _sp.csr_matrix(m), format="csr")
+            return out
         out = mats[0]
         for m in mats[1:]:
             out = np.kron(out, m)
@@ -138,10 +152,11 @@ class Model(Mechanism):
     """
 
     def __init__(self, subsystems: dict | None = None, groups: dict | None = None,
-                 jumps: dict | None = None):
+                 jumps: dict | None = None, sparse: bool = False):
         self.subsystems = dict(subsystems or {})   # {name: dim}, canonical order
         self.groups = {k: list(v) for k, v in (groups or {}).items()}  # H terms
         self.jumps = {k: list(v) for k, v in (jumps or {}).items()}    # Lindblad terms
+        self.is_sparse = bool(sparse)  # materialize as scipy CSR (see `sparse()`)
         self._cache = None      # built lazily by _materialize()
         self._cache_key = None  # structure _cache was built from
 
@@ -161,9 +176,25 @@ class Model(Mechanism):
         for k, terms in other.jumps.items():
             jumps.setdefault(k, [])
             jumps[k] = jumps[k] + list(terms)
-        return Model(subsystems, groups, jumps)
+        # sparse is sticky under composition: either side sparse => sum sparse
+        return Model(subsystems, groups, jumps, sparse=self.is_sparse or other.is_sparse)
 
     __radd__ = __add__
+
+    def sparse(self, flag: bool = True) -> "Model":
+        """Return this Model flagged to materialize as scipy sparse (CSR).
+
+        Same physics, different storage: every embedded term matrix and the
+        static sum become CSR, `hamiltonian(t)` / `jump_operators(t)` return
+        sparse matrices (NOT dense `Operator`s), and the evolution classes use
+        sparse matrix-vector products (and `expm_multiply` on the exact
+        piecewise-constant path). Worth it once the joint dimension reaches a
+        few thousand; below that, dense is as fast or faster.
+
+        The flag is sticky under composition: `H.sparse() + other` is sparse.
+        `H.sparse(False)` (or on any composition of sparse models) toggles back
+        to dense."""
+        return Model(self.subsystems, self.groups, self.jumps, sparse=flag)
 
     def _reject_jumps(self, op: str):
         """Scaling/negating/subtracting a DISSIPATIVE model has no agreed
@@ -185,7 +216,7 @@ class Model(Mechanism):
         Refuses a Model carrying jump operators (see `_reject_jumps`)."""
         self._reject_jumps("scale")
         groups = {k: [term.scaled(c) for term in v] for k, v in self.groups.items()}
-        return Model(self.subsystems, groups, self.jumps)
+        return Model(self.subsystems, groups, self.jumps, sparse=self.is_sparse)
 
     __rmul__ = __mul__
 
@@ -209,7 +240,7 @@ class Model(Mechanism):
         the jumps carried through, `hconj(coherent + jump(...))` would merge two
         identical jump dicts and silently double every dissipation rate."""
         groups = {k: [term.dag() for term in v] for k, v in self.groups.items()}
-        return Model(self.subsystems, groups)
+        return Model(self.subsystems, groups, sparse=self.is_sparse)
 
     def replace(self, **named) -> "Model":
         """Swap out named term groups wholesale: the composable-error workflow.
@@ -238,7 +269,7 @@ class Model(Mechanism):
                 jumps[name] = new_jumps
             elif name in jumps:
                 del jumps[name]
-        return Model(subsystems, groups, jumps)
+        return Model(subsystems, groups, jumps, sparse=self.is_sparse)
 
     def without(self, *names) -> "Model":
         """Drop named term groups (from both H terms and jumps)."""
@@ -247,11 +278,11 @@ class Model(Mechanism):
                 raise KeyError(f"no term group named {name!r}")
         groups = {k: v for k, v in self.groups.items() if k not in names}
         jumps = {k: v for k, v in self.jumps.items() if k not in names}
-        return Model(self.subsystems, groups, jumps)
+        return Model(self.subsystems, groups, jumps, sparse=self.is_sparse)
 
     def group(self, name) -> "Model":
         """Extract one named group as its own Model (same registry)."""
-        out = Model(self.subsystems)
+        out = Model(self.subsystems, sparse=self.is_sparse)
         if name in self.groups:
             out.groups[name] = list(self.groups[name])
         if name in self.jumps:
@@ -269,7 +300,12 @@ class Model(Mechanism):
             d *= v
         return d
 
-    def _embed(self, term: Term) -> np.ndarray:
+    def _embed(self, term: Term):
+        """Embed one term into the joint space: dense ndarray, or CSR when
+        this Model is flagged sparse (embed() stays sparse throughout)."""
+        if self.is_sparse:
+            return embed(term.local_matrix(sparse=True), self.subsystems,
+                         term.involved())
         return np.asarray(embed(term.local_matrix(), self.subsystems, term.involved()))
 
     def _structure(self):
@@ -283,7 +319,8 @@ class Model(Mechanism):
         its id. Rebuild the Model rather than edit a Term."""
         return (tuple((k, tuple(id(t) for t in v)) for k, v in self.groups.items()),
                 tuple((k, tuple(id(t) for t in v)) for k, v in self.jumps.items()),
-                tuple(self.subsystems.items()))
+                tuple(self.subsystems.items()),
+                self.is_sparse)
 
     def _materialize(self):
         """Embed every term once (embedding is time-independent), sum the
@@ -297,7 +334,10 @@ class Model(Mechanism):
             warnings.warn(f"composing terms tagged with different frames {sorted(frames)} "
                           "-- literal addition of Models written in different "
                           "frames is not physically meaningful", stacklevel=3)
-        static = np.zeros((self.dim, self.dim), dtype=complex)
+        if self.is_sparse:
+            static = _sp.csr_matrix((self.dim, self.dim), dtype=complex)
+        else:
+            static = np.zeros((self.dim, self.dim), dtype=complex)
         dynamic = []
         for terms in self.groups.values():
             for term in terms:
@@ -319,20 +359,33 @@ class Model(Mechanism):
         self._cache_key = key
         return self._cache
 
-    def hamiltonian(self, t) -> Operator:
+    def hamiltonian(self, t):
         # `static` is the memoized sum; never hand it out or accumulate into it,
         # or a caller's in-place edit of H(t) would silently corrupt the cache.
         # (Stacking the dynamic terms into one (K,d,d) contraction was measured
         # SLOWER than this loop at realistic sizes -- the cost is in evaluating
         # the K coefficient callables, not in the matrix algebra.)
+        # Sparse models return a scipy CSR matrix, NOT a dense Operator -- at
+        # the dimensions where sparse is worth toggling on, densifying here
+        # would defeat the point (and can exceed memory outright). Call
+        # `.toarray()` yourself if you really want the dense matrix.
         static, dynamic, _, _ = self._materialize()
         H = static.copy()
+        if self.is_sparse:
+            for coeff, mat in dynamic:
+                H = H + coeff(t) * mat  # csr addition allocates; no in-place form
+            return H
         for coeff, mat in dynamic:
-            H += coeff(t) * mat
+            H += coeff(t) * mat  # in-place into the copy of `static`
         return Operator(H)
 
     def jump_operators(self, t) -> list:
+        """Jump operators at time t: dense `Operator`s, or CSR matrices when
+        this Model is flagged sparse (same convention as `hamiltonian`)."""
         _, _, jump_static, jump_dynamic = self._materialize()
+        if self.is_sparse:
+            return ([L.copy() for L in jump_static]
+                    + [coeff(t) * mat for coeff, mat in jump_dynamic])
         return ([Operator(L) for L in jump_static]
                 + [Operator(coeff(t) * mat) for coeff, mat in jump_dynamic])
 
@@ -345,6 +398,8 @@ class Model(Mechanism):
         parts = [f"subsystems=({subs})", f"terms=({gs})"]
         if js:
             parts.append(f"jumps=({js})")
+        if self.is_sparse:
+            parts.append("sparse")
         return f"Model({', '.join(parts)})"
 
 

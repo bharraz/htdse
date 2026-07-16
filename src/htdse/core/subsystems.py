@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import sparse as _sp
 
 from .operator import Operator
 
@@ -72,6 +73,11 @@ def embed(op: Operator, dims: dict, subsystem) -> Operator:
       everything else and the permutation into `dims` order are handled here,
       so interaction terms between arbitrary factors never need hand-rolled
       Kronecker bookkeeping.
+
+    A scipy.sparse `op` returns a sparse (CSR) result -- the whole computation
+    stays sparse (kron with a sparse identity, permutation as an O(nnz) index
+    remap), so the dense joint matrix is never formed. Dense in -> `Operator`
+    out; sparse in -> CSR out.
     """
     names = list(dims.keys())
     involved = (subsystem,) if isinstance(subsystem, str) else tuple(subsystem)
@@ -81,7 +87,9 @@ def embed(op: Operator, dims: dict, subsystem) -> Operator:
     if len(set(involved)) != len(involved):
         raise ValueError(f"repeated subsystem in {involved}")
 
-    op = np.asarray(op, dtype=complex)
+    is_sparse = _sp.issparse(op)
+    if not is_sparse:
+        op = np.asarray(op, dtype=complex)
     d_inv = int(np.prod([dims[n] for n in involved]))
     if op.shape != (d_inv, d_inv):
         raise ValueError(f"op has shape {op.shape}, but subsystems {involved} "
@@ -89,9 +97,18 @@ def embed(op: Operator, dims: dict, subsystem) -> Operator:
 
     rest = [n for n in names if n not in involved]
     d_rest = int(np.prod([dims[n] for n in rest])) if rest else 1
+    order_now = list(involved) + rest
+
+    if is_sparse:
+        # kron with the identity on the rest, all sparse: ordered (involved..., rest...)
+        big = _sp.kron(op.astype(complex), _sp.identity(d_rest, dtype=complex),
+                       format="coo")
+        if order_now == names:
+            return big.tocsr()
+        return _permute_factors_sparse(big, dims, order_now)
+
     big = np.kron(op, np.eye(d_rest, dtype=complex))  # ordered: involved..., rest...
 
-    order_now = list(involved) + rest
     if order_now == names:
         return Operator(big)  # already in canonical order, no permutation needed
 
@@ -103,3 +120,27 @@ def embed(op: Operator, dims: dict, subsystem) -> Operator:
     tensor = tensor.transpose(perm + [p + n for p in perm])  # rows and columns together
     D = _total_dim(dims)
     return Operator(tensor.reshape(D, D))
+
+
+def _permute_factors_sparse(big, dims: dict, order_now: list):
+    """Sparse counterpart of the dense reshape/transpose factor permutation.
+
+    `big` (COO, D x D) lives on the tensor factors in `order_now` order; the
+    result lives on them in `dims` (canonical) order. A sparse matrix cannot be
+    reshaped into a 2N-index tensor, so instead each nonzero's flat row/column
+    index is decomposed into per-factor digits, the digits are reordered, and
+    the index is re-flattened -- an O(nnz) remap, exactly equivalent to the
+    dense `tensor.transpose(perm + [p + n for p in perm])`.
+    """
+    names = list(dims.keys())
+    shape_now = [dims[n] for n in order_now]
+    perm = [order_now.index(nm) for nm in names]  # output axis j reads source axis perm[j]
+    out_shape = [shape_now[p] for p in perm]      # == [dims[n] for n in names]
+
+    row_digits = np.unravel_index(big.row, shape_now)  # one digit array per factor
+    col_digits = np.unravel_index(big.col, shape_now)
+    new_rows = np.ravel_multi_index([row_digits[p] for p in perm], out_shape)
+    new_cols = np.ravel_multi_index([col_digits[p] for p in perm], out_shape)
+
+    D = _total_dim(dims)
+    return _sp.coo_matrix((big.data, (new_rows, new_cols)), shape=(D, D)).tocsr()
