@@ -320,8 +320,11 @@ class Model(Mechanism):
         return self._cache
 
     def hamiltonian(self, t) -> Operator:
-        # `static` is the memoized sum; copy before returning/accumulating, or a
-        # caller's in-place edit of H(t) would silently corrupt the cache.
+        # `static` is the memoized sum; never hand it out or accumulate into it,
+        # or a caller's in-place edit of H(t) would silently corrupt the cache.
+        # (Stacking the dynamic terms into one (K,d,d) contraction was measured
+        # SLOWER than this loop at realistic sizes -- the cost is in evaluating
+        # the K coefficient callables, not in the matrix algebra.)
         static, dynamic, _, _ = self._materialize()
         H = static.copy()
         for coeff, mat in dynamic:

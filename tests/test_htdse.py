@@ -349,4 +349,41 @@ with redirect_stdout(buf):
     HamiltonianEvolution(RabiDrive(1.0), Operator(ket("0"))).state_at(1.0)
 check("verbose default prints the integration", "integrating" in buf.getvalue())
 
+print("== magnus / pauli utility ==")
+from scipy.linalg import expm as _expm
+from htdse import magnus, magnus_pauli, pauli_decompose
+from htdse.submodules.spin import pauli_term
+
+# a constant H commutes with itself: Omega1 = -i H T exactly, Omega2 = 0
+Hc = pauli_term("X0", coeff=0.3) + pauli_term("Z1", coeff=0.2)
+O1, O2 = magnus(Hc, 1.7)
+check("magnus: Omega1 = -i H T for constant H",
+      np.allclose(O1, -1j * np.asarray(Hc.hamiltonian(0.0)) * 1.7, atol=1e-8))
+check("magnus: Omega2 = 0 for constant H", np.max(np.abs(O2)) < 1e-9)
+
+# pauli_decompose inverts a known Pauli sum
+d = pauli_decompose(np.asarray(Hc.hamiltonian(0.0)))
+check("pauli_decompose reads off the right strings",
+      abs(d["XI"] - 0.3) < 1e-12 and abs(d["IZ"] - 0.2) < 1e-12 and len(d) == 2)
+
+# non-commuting, time-dependent: 2nd order must beat 1st against the real solve
+Ht = (pauli_term("X0", coeff=lambda t: 0.4 * np.cos(t))
+      + pauli_term("Z0Z1", coeff=0.25)
+      + pauli_term("Y1", coeff=lambda t: 0.3 * np.sin(2 * t)))
+with quiet():
+    U_true = np.asarray(UnitaryEvolution(Ht, dim=4).unitary_at(0.35))
+o1, o2 = magnus(Ht, 0.35)
+F1 = process_fidelity(_expm(o1), U_true)
+F2 = process_fidelity(_expm(o1 + o2), U_true)
+check(f"magnus: 2nd order beats 1st (1-F: {1-F1:.1e} -> {1-F2:.1e})", (1 - F2) < (1 - F1))
+# Omega2 generates strings absent from H itself -- the point of the utility
+terms = magnus_pauli(Ht, 0.35)
+check("magnus_pauli: Omega2 turns on new Pauli strings",
+      "ZX" in terms[1] and "ZX" not in terms[0])
+try:
+    magnus(Hc, 1.0, order=3)
+    check("magnus refuses order > 2", False)
+except ValueError:
+    check("magnus refuses order > 2 rather than silently truncating", True)
+
 print(f"\nALL {len(PASS)} CHECKS PASSED")

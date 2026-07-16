@@ -33,16 +33,25 @@ def wigner(state, xs, ps) -> np.ndarray:
     B = 4 * np.abs(alpha) ** 2
     pref = np.exp(-B / 2) / np.pi          # (1/pi) e^{-2|alpha|^2}
 
+    # (2 alpha*)^k for every k that can appear, built once by repeated
+    # multiplication -- recomputing the power on the whole grid inside the
+    # element loop is the dominant cost otherwise.
+    A = 2 * np.conj(alpha)
+    Apow = [np.ones_like(A)]
+    for _ in range(1, d):
+        Apow.append(Apow[-1] * A)
+
     W = np.zeros_like(X)
     for n in range(d):
-        W += pref * (-1) ** n * rho[n, n].real * eval_genlaguerre(n, 0, B)
+        if rho[n, n].real != 0:
+            W += pref * (-1) ** n * rho[n, n].real * eval_genlaguerre(n, 0, B)
         for m in range(n + 1, d):
-            if rho[m, n] == 0:
+            if abs(rho[m, n]) < 1e-14:   # negligible coherence: skip the Laguerre
                 continue
             k = m - n
             amp = np.exp(0.5 * (gammaln(n + 1) - gammaln(m + 1)))  # sqrt(n!/m!), stable
             W += pref * 2 * (-1) ** n * amp \
-                 * np.real(rho[m, n] * (2 * np.conj(alpha)) ** k) \
+                 * np.real(rho[m, n] * Apow[k]) \
                  * eval_genlaguerre(n, k, B)
     return W
 

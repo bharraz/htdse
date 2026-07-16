@@ -14,11 +14,9 @@ def annihilation(n_max: int) -> np.ndarray:
     Note: a^dagger|n_max> is artificially truncated to 0 (no room above
     n_max) -- choose n_max well above any population expected to reach it.
     """
-    dim = n_max + 1
-    a = np.zeros((dim, dim), dtype=complex)
-    for n in range(1, dim):
-        a[n - 1, n] = np.sqrt(n)  # lowers |n> -> sqrt(n)|n-1>
-    return a
+    # a[n-1, n] = sqrt(n): the first superdiagonal. Built in one shot -- this is
+    # called from inner loops (per ion, per mode, per plot), so no Python loop.
+    return np.diag(np.sqrt(np.arange(1, n_max + 1, dtype=float)), 1).astype(complex)
 
 
 def creation(n_max: int) -> np.ndarray:

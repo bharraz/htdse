@@ -14,6 +14,7 @@ from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
                              DensityMatrixEvolution, LindbladEvolution)
 from .core.subsystems import embed, partial_trace
 from .core.compare import compare_over
+from .magnus import magnus, magnus_pauli, pauli_decompose
 from .util import (MAG_THRESHOLD, otimes, ket, projector, fidelity,
                    process_fidelity, density_fidelity, relative_phase,
                    binary_to_index, index_to_binary)
@@ -22,6 +23,7 @@ __all__ = [
     "quiet", "Operator", "Mechanism", "Model", "term", "jump", "hconj",
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
     "LindbladEvolution", "embed", "partial_trace", "compare_over",
+    "magnus", "magnus_pauli", "pauli_decompose",
     "MAG_THRESHOLD", "otimes", "ket", "projector", "fidelity",
     "process_fidelity", "density_fidelity", "relative_phase",
     "binary_to_index", "index_to_binary",
