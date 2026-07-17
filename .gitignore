@@ -5,6 +5,8 @@ __pycache__/
 *.pyd
 *.pyo
 
+.claude/*
+
 # Ignore setuptools/distribution metadata
 *.egg-info/
 
