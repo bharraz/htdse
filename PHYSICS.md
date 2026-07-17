@@ -1,106 +1,12 @@
-# htdse — Physics & Structure Writeup
+# htdse — physics & numerics under the hood
 
-This is the "how it actually hangs together" document: each layer of the package, the
-physics it implements, the functions that implement it, and the numerical considerations.
-Read top to bottom once; after that the section headers work as a reference.
+This is the transparency document: for each layer of the package, the physics it
+implements, the functions that implement it, and the numerical considerations. Read top
+to bottom once; after that the section headers work as a reference.
 
----
-
-## 0. The hierarchy in one picture
-
-Everything in the package is one of five kinds of object, stacked:
-
-```
-Operator (np.ndarray + metadata)          <- the universal currency: any matrix/vector
-   ^
-Term                                       <- coeff(t) x local ops on NAMED subsystems
-   ^
-Model (term layer)                         <- named GROUPS of terms + subsystem registry
-   ^                                          (a composed Hamiltonian +/- dissipation;
-                                              is itself a Mechanism)
-Mechanism                                  <- anything with .hamiltonian(t) / .unitary(t)
-   ^                                          / .jump_operators(t)
-Evolution classes                          <- lazily solve ONE equation of motion each
-   (HamiltonianEvolution, UnitaryEvolution,
-    DensityMatrixEvolution, LindbladEvolution)
-```
-
-Here is a concrete Hamiltonian with every level labeled — a driven Jaynes–Cummings model:
-$$ H(t) =
-\underbrace{\tfrac{\omega_0}{2}\sigma_z}_{\texttt{atom}}
-+ \underbrace{\omega\,a^\dagger a}_{\texttt{mode}}
-+ \underbrace{g(\sigma_+\otimes a + \mathrm{h.c.})}_{\texttt{jc = hconj(term(...))}}
-+ \underbrace{\sin(t)\,\tfrac{\Omega}{2}\sigma_x}_{\texttt{drive, coeff}=f(t)}
- $$
-
-
-```python
-#           ┌ one TERM: coefficient x {subsystem: local operator}
-#           │  (coeff may be a scalar or a callable f(t))
-atom  = term(0.5 * w0 * sigma_z, on="spin", name="atom")     # GROUP "atom":  1 term
-mode  = term(w * n_op,           on="mode", name="mode")     # GROUP "mode":  1 term
-jc    = hconj(term({"spin": sigma_plus, "mode": a},          # GROUP "jc":    2 terms
-                   coeff=g, name="jc"))                      #   (the term + its h.c.)
-drive = term(0.5 * Om * sigma_x, on="spin", name="drive",    # GROUP "drive": 1 term,
-             coeff=lambda t: np.sin(t))                      #   time-dependent
-
-H = atom + mode + jc + drive        # a Model: 4 named groups
-#   ^ '+' merges the SUBSYSTEM REGISTRY {"spin": 2, "mode": n_max+1}
-#     (union by NAME; same name must mean same dimension) and the group dicts.
-#     No matrix is built here.
-
-H.hamiltonian(t)                    # MATERIALIZATION: only now does the dense
-                                    # 2(n_max+1)-dim matrix exist. Static terms are
-                                    # embedded+summed once and cached; time-dependent
-                                    # terms are added per call.
-
-H_real = H.replace(drive=noisy_drive)   # groups are SWAP HANDLES: same model,
-                                        # one entry replaced (this is the whole
-                                        # target-vs-realized workflow)
-```
-
-The vocabulary. Read these six definitions once, in order — every later section assumes
-them. They are illustrated against the driven Jaynes–Cummings example above.
-
-- **Subsystem** — *one named physical factor of the Hilbert space*, e.g. `"spin"` (dim 2) or
-  `"mode"` (dim `n_max+1`). A subsystem is just a `(name, dimension)` pair. The **name** is the
-  load-bearing idea in the whole package: two operators tagged with the same name act on the
-  same physical factor, so `+` knows how to line them up and tensor-pad — you never write a
-  `⊗ I` by hand. The full space is the tensor product of all the distinct subsystems that
-  appear (`spin ⊗ mode`, here dim `2(n_max+1)`).
-
-- **Operator** (`core/operator.py`) — *a matrix or vector* (an `np.ndarray` subclass). A
-  Hamiltonian matrix, a ket, a density matrix, a propagator are all Operators; they differ by
-  *role*, not type. This is the concrete numerical currency, one level below the named layer.
-
-- **Term** (`core/terms.py`) — *one product*: a coefficient (a number, or a callable `f(t)`)
-  times local operators, each tagged with the **subsystem name** it acts on. `atom` above is
-  one term (`½ω₀·σ_z` on `"spin"`); `jc` is two (the coupling and its h.c.). A term names only
-  the subsystems it touches — it stays small; identity on everything else is implicit.
-
-- **Group** — *a named bundle of terms* inside a `Model`, so you can grab/replace/delete a
-  piece of physics wholesale. `atom`, `mode`, `jc`, `drive` above are four groups; the group
-  name is the handle for `H.replace(drive=…)`, `H.without("ld2_q0")`, `H.group("jc")`.
-
-- **Registry** — *the `{name: dimension}` map* a `Model` carries — the set of subsystems it
-  spans. It fixes the canonical tensor-product order (order of first appearance) and rides
-  along to evolutions automatically, so `trace_out`/`embed` never need a separate dims dict.
-
-- **Model** (`core/terms.py`) — *the whole composed object* the term layer builds: named
-  **groups** of terms (a Hamiltonian) plus, optionally, named groups of jump operators
-  (dissipation), over one **registry** of subsystems. It is *not* a matrix — it materializes
-  `H(t)` (aka `.H(t)`) and `jump_operators(t)` on demand, which is what makes it a
-  **Mechanism**. Named for what it *is* — a model of the system — since a "Hamiltonian" that
-  also carries Lindblad channels would be a misnomer.
-
-- **Mechanism** (`core/mechanism.py`) — *the interface the evolution layer consumes*: anything
-  answering `.hamiltonian(t)` (and/or `.unitary(t)`, `.jump_operators(t)`). A term-layer
-  `Model` is one; a hand-written class (e.g. `MSMagnus`) is another.
-
-In one sentence: **terms** (coeff × local ops on named **subsystems**) are bundled into named
-**groups**, which together with a **registry** of subsystems make a **Model**, which is one
-kind of **Mechanism** that an **evolution** integrates — and every level is made of, or
-produces, **Operators**.
+Prerequisite vocabulary — *subsystem, term, group, registry, Model, Mechanism* — is
+defined once, in the hierarchy diagram of the [README](README.md). For which functions
+to call in what order, see [GUIDE.md](GUIDE.md).
 
 ---
 
@@ -142,6 +48,24 @@ Considerations baked into the solver (`core/evolution.py::_ExtendableSolver`):
   operators (closed-system solver would silently ignore the dissipation).
 - **Verbosity.** Every real integration prints (mechanism, range, method, tolerances,
   step/eval counts). Wrap optimizer loops in `with htdse.quiet():`.
+
+**Sparse storage (`Model.sparse()`).** A term-layer Hamiltonian is a sum of embedded
+local operators — Paulis, ladder operators — so its joint matrix is extremely sparse
+(fill ~10⁻² at dim 10³, ~10⁻³ at 10⁴). `H.sparse()` flags the model to materialize as
+scipy CSR instead of dense ndarrays: each term is embedded via sparse Kronecker products
+(non-adjacent factor placement becomes an O(nnz) index remap instead of a dense
+reshape/transpose), `hamiltonian(t)` returns CSR, and the RHS above becomes a sparse
+matrix–vector product — the ODE solver itself never notices, since it only ever sees the
+dense derivative vector. Same physics, verified identical against the dense path in
+`tests/test_htdse.py`.
+
+What scales and what doesn't: the *state* stays dense throughout, so a ket evolution is
+O(nnz) per RHS call with O(d) memory — dim 10⁴–10⁵ is routine (5 ions × 5 modes at
+dim 32768: seconds, ~30 MB for H, where dense would need 17 GB). Propagators and density
+matrices are d×d objects regardless of how sparse H is, so U/ρ evolutions gain only in
+the products, not in the ceiling. Below dim ~10³ dense is as fast or faster; the toggle
+is explicit, sticky under composition (`H.sparse() + other` is sparse), and reversible
+(`.sparse(False)`).
 
 ---
 
@@ -300,7 +224,9 @@ smoothly varying H (midpoint rule), i.e. global error $O(\Delta t^2)$.
 **Code.** `TrotterizedMechanism(inner, t_start, t_stop, n_steps)` wraps *any* mechanism into
 its piecewise-constant version. It declares the step edges as `breakpoints()` (solver never
 integrates across an edge) and `piecewise_constant = True` (each step propagated exactly via
-eigendecomposition, section 1). So "Trotter error" studies compare *only* discretization
+eigendecomposition, section 1; for a sparse model the dense eigendecomposition is replaced by
+`scipy.sparse.linalg.expm_multiply` — the *action* of $e^{-iH\Delta t}$ on the state, so the
+dense d×d exponential is never formed). So "Trotter error" studies compare *only* discretization
 physics, with zero ODE-stepping artifacts mixed in — the smooth `inner` evolution and the
 Trotterized one are both solved to machine-level accuracy of their respective models.
 

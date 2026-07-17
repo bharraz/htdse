@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "htdse"
+version = "0.1.0"
+description = "Target-vs-reality Hamiltonian simulation: compose a model by subsystem name, evolve it, compare it to what the hardware actually does"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

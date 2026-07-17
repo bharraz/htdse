@@ -2,20 +2,19 @@ import numpy as np
 
 
 class Operator(np.ndarray):
-    """ndarray subclass carrying a free-form `.params` metadata dict.
+    """The package's universal currency: any matrix or vector of the quantum
+    mechanics. A Hamiltonian, a propagator, a density matrix, a ket are all
+    Operators -- distinguished by *role*, not by type, with no shape
+    enforcement. It IS an ndarray (a subclass), so numpy operations always
+    just work on it.
 
-    No shape enforcement -- an Operator may be a Hamiltonian, unitary, density
-    matrix, or state vector. Domain-specific subclasses (spin, motional, ...)
-    extend this with their own reserved params keys and constructors.
-
-    Metadata propagation rule: any array derived from an Operator (a view, a
-    slice, or the result of arithmetic like `H1 + H2`) gets a *shallow copy*
-    of the source's params -- for arithmetic with two Operators, numpy hands us
-    the first operand, so the result carries a copy of `H1.params`. The copy
-    matters: without it every derived array would share (and silently mutate)
-    one dict. Treat params on derived arrays as provenance hints, not truth --
-    anything semantically important (subsystem structure, term decompositions)
-    belongs in the term layer (core/terms.py), which propagates it correctly.
+    Beyond the array it carries a free-form `.params` metadata dict. Any
+    derived array (view, slice, arithmetic like `H1 + H2`) gets a *shallow
+    copy* of the source's params (numpy hands us the first operand), so
+    derived arrays never share-and-mutate one dict. Treat params on derived
+    arrays as provenance hints, not truth -- anything semantically important
+    (subsystem structure, term decompositions) belongs in the term layer
+    (core/terms.py), which propagates it correctly.
     """
 
     def __new__(cls, input_array, params=None):

@@ -232,13 +232,14 @@ class Model(Mechanism):
         return self + (other * (-1.0))
 
     def dag(self) -> "Model":
-        """Hermitian conjugate of every Hamiltonian term (groups keep their
-        names). Handy for writing `H_int + H_int.dag()` for `... + h.c.`
+        """Hermitian conjugate of every Hamiltonian term: (A x B)^dag with the
+        coefficient conjugated, groups keeping their names. This is the `h.c.`
+        of a paper Hamiltonian -- `H_int + H_int.dag()` completes a coupling
+        written one-way (or use `hconj(H_int)` for the same thing in one call).
 
-        Jump operators are DROPPED, not conjugated: L^dag is a different
-        channel, and `h + h.dag()` is meant to complete a coherent term. Were
-        the jumps carried through, `hconj(coherent + jump(...))` would merge two
-        identical jump dicts and silently double every dissipation rate."""
+        Caveat: jump operators are DROPPED, not conjugated -- L^dag is a
+        physically different channel, and carrying jumps through `h + h.dag()`
+        would silently double every dissipation rate."""
         groups = {k: [term.dag() for term in v] for k, v in self.groups.items()}
         return Model(self.subsystems, groups, sparse=self.is_sparse)
 

@@ -25,6 +25,7 @@ def creation(n_max: int) -> np.ndarray:
 
 
 def number_operator(n_max: int) -> np.ndarray:
+    """n = a^dagger a: n|k> = k|k>, truncated at n_max."""
     a = annihilation(n_max)
     return a.conj().T @ a  # a^dagger a
 
