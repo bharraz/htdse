@@ -47,21 +47,19 @@ on this loop.
 
 ## The hierarchy
 
-Everything in the package is one of six kinds of object, stacked. Lower layers are the
+Everything in the package is one of five kinds of object, stacked. Lower layers are the
 ingredients of the ones above:
 
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 60, "nodeSpacing": 50}}}%%
 flowchart BT
-    OP["<b>Operator</b><br/>any matrix or vector: a Hamiltonian, a ket, a density matrix, a propagator<br/>an ndarray distinguished by role, not by type"]
+    OP["<b>Operator</b><br/>a matrix or vector — a Hamiltonian, a ket, a density matrix, a propagator — this extends numpy ndarray"]
 
-    TERM["<b>Term</b> — one product<br/>coefficient (a number, or f(t)) × local operators<br/>each operator tagged with the <i>subsystem name</i> it acts on: <b>on='spin'</b>"]
+    TERM["<b>Term</b><br/>A coefficient (a number, or f(t)) times local operators,<br/>each operator tagged with the subsystem it acts on<br/><i>e.g. term(0.5 * sigma_z, on='spin')</i>"]
 
-    GROUP["<b>Group</b> — terms bundled under a name: <b>name='drive'</b><br/>the handle a piece of physics is swapped, dropped, or extracted by:<br/>replace(drive=noisy) — without('drive') — group('drive')"]
+    MODEL["<b>Model</b><br/>Groups of terms, acting on a registry of subsystems. The subsystem registry and groups are both stored in dictionaries where the key is the label. Group labels are used to replace/retrieve/remove and subsystem labels are used to embed local operators in the correct order. — not a matrix, it builds H(t) on demand<br/><i>e.g. registry = {'spin': 2, 'mode': 13}; use H.sparse() for large registries</i>"]
 
-    MODEL["<b>Model</b> — the composed system<br/>named groups (and optionally jump operators)<br/>over one <i>registry</i> of subsystems: <b>{'spin': 2, 'mode': 13}</b><br/>not a matrix — it builds H(t) on demand, dense or sparse()"]
-
-    MECH["<b>Mechanism</b> — what an evolution consumes<br/>anything answering hamiltonian(t) and/or unitary(t), plus jump_operators(t)<br/>a Model is one; hand-written classes (MSMagnus, ...) are others"]
+    MECH["<b>Mechanism</b><br/>anything that implements hamiltonian(t) and/or unitary(t), plus jump_operators(t)<br/><i>e.g. a Model is one; a hand-written class (MSMagnus, ...) is another</i>"]
 
     subgraph EVO["<b>Evolution</b> — one class per equation of motion, all lazy"]
         direction LR
@@ -72,9 +70,8 @@ flowchart BT
     end
 
     OP -- "is the building block of" --> TERM
-    TERM -- "named into" --> GROUP
-    GROUP -- "composed by + into" --> MODEL
-    MODEL -- "is one kind of" --> MECH
+    TERM -- "embedded into a subsystem and grouped in names into" --> MODEL
+    MODEL -- "is one implementation of" --> MECH
     MECH -- "is integrated by" --> EVO
 ```
 
