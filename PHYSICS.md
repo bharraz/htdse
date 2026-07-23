@@ -74,7 +74,7 @@ is explicit, sticky under composition (`H.sparse() + other` is sparse), and reve
 **Physics.** The propagator obeys the same equation with a matrix initial condition:
 
 $$ i\,\frac{d}{dt}U(t) = H(t)\,U(t), \qquad U(t_0)=\mathbb 1, \qquad
-U(t) = \mathcal T\exp\!\Big(-i\!\int_{t_0}^{t}\! H(t')\,dt'\Big) $$
+U(t) = \mathcal T\exp\! \Big(-i\! \int_{t_0}^{t}\! H(t')\,dt'\Big) $$
 
 Since $H(t)X$ acts columnwise, the same solver handles it — a ket is just the 1-column case.
 (Corollary you can exploit: stack several initial kets as columns and evolve them all in one
@@ -273,11 +273,11 @@ why `ms_lamb_dicke2` is pre-RWA by construction.)
 $[H_{\rm RWA}(t_1), H_{\rm RWA}(t_2)]$ is a pure spin operator that commutes with everything,
 so the Magnus series **terminates at second order** and the propagator is exact:
 
-$$ U(t) = \exp\!\Big(\sum_j \sigma_{\Phi_j}\big(\alpha_j(t)a^\dagger - \alpha_j^*(t)a\big)\Big)
-\exp\!\Big(i\sum_{jk}\Theta_{jk}(t)\,\sigma_{\Phi_j}\sigma_{\Phi_k}\Big) $$
+$$ U(t) = \exp\! \Big(\sum_j \sigma_{\Phi_j}\big(\alpha_j(t)a^\dagger - \alpha_j^*(t)a\big)\Big)
+\exp\! \Big(i\sum_{jk}\Theta_{jk}(t)\,\sigma_{\Phi_j}\sigma_{\Phi_k}\Big) $$
 
-$$ \alpha_j(t) = -i\!\int_0^t\! f_j, \qquad
-\Theta_{jk}(t) = \int_0^t\! dt_1\!\int_0^{t_1}\! dt_2\; \mathrm{Im}\big[f_j(t_1)f_k^*(t_2)\big] $$
+$$ \alpha_j(t) = -i\! \int_0^t\! f_j, \qquad
+\Theta_{jk}(t) = \int_0^t\! dt_1\! \int_0^{t_1}\! dt_2\; \mathrm{Im}\big[f_j(t_1)f_k^*(t_2)\big] $$
 
 Read it physically: the first factor is a **spin-dependent displacement** — the mode traces
 the phase-space trajectory $\pm\alpha_j(t)$ depending on the $\sigma_{\Phi_j}$ branch (for

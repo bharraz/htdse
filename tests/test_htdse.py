@@ -485,4 +485,36 @@ try:
 except ValueError:
     check("dissipative sparse model rejected by closed-system class", True)
 
+from htdse.core.subsystems import apply as sub_apply, project as sub_project
+
+_Had = np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2)
+_dims = {"A": 2, "B": 2}
+_psi = ket("01")  # |0>_A |1>_B
+
+check("apply: unitary on a subsystem of a ket == embed @ psi",
+      np.allclose(sub_apply(_psi, _Had, _dims, "A"), embed(_Had, _dims, "A") @ _psi))
+_rho = np.outer(_psi, _psi.conj())
+_U = np.asarray(embed(_Had, _dims, "A"))
+check("apply: on a density matrix == U rho U^dag",
+      np.allclose(sub_apply(_rho, _Had, _dims, "A"), _U @ _rho @ _U.conj().T))
+
+_bell = (ket("00") + ket("11")) / np.sqrt(2)
+_rhoB, _p = sub_project(_bell, _dims, "A", ket("0"))
+_P0 = np.asarray(embed(np.outer(ket("0"), ket("0").conj()), _dims, "A"))
+check("project: Born probability == Tr(P rho)",
+      np.isclose(_p, np.real(_bell.conj() @ _P0 @ _bell)))
+check("project: reduces to conditional state on the rest (Bell, A=0 -> B in |0>)",
+      np.allclose(_rhoB, np.outer(ket("0"), ket("0").conj())))
+_rhoB2, _p2 = sub_project(np.outer(_bell, _bell.conj()), _dims, "A", ket("0"))
+check("project: ket input and density-matrix input agree",
+      np.allclose(_rhoB, _rhoB2) and np.isclose(_p, _p2))
+_xp = (ket("0") + ket("1")) / np.sqrt(2)
+_rhoB3, _p3 = sub_project(otimes(_xp, ket("0")), _dims, "A", _xp)
+check("project: +/- basis measurement by passing |+> directly (p=1)", np.isclose(_p3, 1.0))
+try:
+    sub_project(otimes(ket("0"), ket("0")), _dims, "A", ket("1"))  # A is |0>, project on |1>
+    check("project: zero-probability outcome raises", False)
+except ValueError:
+    check("project: zero-probability outcome raises", True)
+
 print(f"\nALL {len(PASS)} CHECKS PASSED")

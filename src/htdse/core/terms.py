@@ -12,7 +12,7 @@ space is a *materialization* computed only when an evolution asks for
 
 Because terms carry subsystem *names*, composition is literal:
 
-    H_atom = term(0.5 * w0 * sigma_z, on="spin")
+    H_atom = term(0.5 * w0 * sigma_z, on="spin")  # term factory function (bottom of file)
     H_mode = term(w * number_op, on="mode")
     H_jc   = hconj(term({"spin": sigma_plus, "mode": a}, coeff=g))
     H      = H_atom + H_mode + H_jc          # names do the embedding
@@ -64,6 +64,12 @@ class Term:
     `ops` maps a subsystem name (str) -- or a tuple of names, for a joint
     operator that doesn't factor -- to a matrix. `dims` records the dimension
     of every subsystem the term touches.
+
+    `frame`: an optional free-text tag (e.g. "lab", "rotating@w0"), carrying no
+    physics itself -- `+` is literal matrix addition, so it can't detect two
+    terms written under different frame assumptions being combined into
+    something meaningless. Mixing distinct tags in one Model warns at
+    materialization; this is the only thing `frame` does.
     """
 
     def __init__(self, coeff: Coefficient, ops: dict, dims: dict, frame=None):

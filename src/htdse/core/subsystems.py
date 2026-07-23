@@ -144,3 +144,57 @@ def _permute_factors_sparse(big, dims: dict, order_now: list):
 
     D = _total_dim(dims)
     return _sp.coo_matrix((big.data, (new_rows, new_cols)), shape=(D, D)).tocsr()
+
+
+def apply(state, op, dims: dict, on) -> Operator:
+    """Apply a local operator `op` on named subsystem(s) `on` to a ket or a
+    density matrix, leaving the other subsystems alone.
+
+    `on` is a name or a tuple of names; `dims` is the {name: dim} registry
+    (e.g. an evolution's `.subsystems`). `op` acts on just the `on` factor(s)
+    and is lifted with `embed`, so you never write the identity padding:
+
+        ket:            |psi>  ->  U|psi>
+        density matrix: rho    ->  U rho U^dagger,     U = embed(op, dims, on)
+
+    Dispatched on shape (1-D -> ket, 2-D -> density matrix). Example: a
+    Hadamard on one ancilla is `apply(rho, H, dims, "a1")`; on both at once,
+    `apply(rho, otimes(H, H), dims, ("a1", "a2"))`.
+    """
+    U = embed(op, dims, on)
+    arr = np.asarray(state)
+    if arr.ndim == 1:
+        return Operator(U @ arr)
+    return Operator(U @ arr @ U.conj().T)
+
+
+def project(state, dims: dict, on, onto):
+    """Projective measurement of subsystem(s) `on` onto the pure state `onto`,
+    reduced onto the remaining subsystems. Returns (reduced_rho, probability).
+
+    Accepts a ket OR a density matrix, and ALWAYS returns a density matrix --
+    a measured-and-reduced state is generically mixed. `onto` is a state on
+    the `on` factor(s), so measuring in the +/- basis is just
+    `onto = otimes(|+>, |+>)` (no basis change needed). The probability is the
+    Born rule Tr(P rho), P = embed(|onto><onto|, dims, on).
+
+        ket:            phi = P|psi>;  p = <phi|phi>;  reduce |phi><phi|
+        density matrix: rho -> P rho P;  p = Tr(P rho);  reduce
+    then partial-trace out `on`, leaving the conditional state on the rest.
+    """
+    onto = np.asarray(onto, dtype=complex)
+    onto = onto / np.linalg.norm(onto)
+    P = embed(np.outer(onto, onto.conj()), dims, on)   # |onto><onto| embedded
+    arr = np.asarray(state, dtype=complex)
+    if arr.ndim == 1:                       # ket
+        phi = P @ arr
+        p = float(np.real(np.vdot(phi, phi)))
+        collapsed = np.outer(phi, phi.conj())
+    else:                                   # density matrix
+        collapsed = P @ arr @ P
+        p = float(np.real(np.trace(collapsed)))
+    if p < 1e-12:
+        raise ValueError(f"measurement outcome has ~zero probability ({p:.3g}); "
+                         "cannot condition on it")
+    reduced = partial_trace(Operator(collapsed / p), dims, on)
+    return reduced, p
