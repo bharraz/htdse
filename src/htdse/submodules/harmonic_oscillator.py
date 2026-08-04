@@ -13,6 +13,9 @@ def annihilation(n_max: int) -> np.ndarray:
 
     Note: a^dagger|n_max> is artificially truncated to 0 (no room above
     n_max) -- choose n_max well above any population expected to reach it.
+    You do not have to police this by eye: every evolution class checks the
+    top-level population and raises a TruncationWarning when it matters (see
+    core/truncation.py).
     """
     # a[n-1, n] = sqrt(n): the first superdiagonal. Built in one shot -- this is
     # called from inner loops (per ion, per mode, per plot), so no Python loop.

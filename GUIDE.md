@@ -165,6 +165,34 @@ bare     = model.without("carrier_q0")          # drop
 one      = model.group("jc")                    # extract
 ```
 
+**Is your Fock truncation big enough?** — every evolution checks this for you.
+A truncated mode sets `a†|n_max⟩ = 0`, which the solver cannot detect: the norm
+stays 1 and the integration converges cleanly onto the wrong Hamiltonian. So the
+check is on the state — if population reaches `|n_max⟩`, you get a
+`TruncationWarning` naming the subsystem:
+
+```python
+ht.truncation_populations(psi, ev.subsystems)   # {'mode': 3.1e-09} — inspect directly
+
+ht.HamiltonianEvolution(H, psi0, truncation=1e-9)        # stricter threshold
+ht.HamiltonianEvolution(H, psi0, truncated=("mode",))    # check only these factors
+ht.HamiltonianEvolution(H, psi0, truncation=False)       # off for this evolution
+with ht.no_truncation_check(): ...                        # off globally
+```
+
+By default every registered factor of dimension ≥ 3 is checked (a dim-2 factor is
+a qubit, whose top level is an ordinary state rather than a ceiling); name the real
+ladders with `truncated=` if you have a genuine qudit. Note `quiet()` does *not*
+suppress these — a wrong answer isn't chatter. In a test suite or overnight sweep,
+promote them:
+
+```python
+warnings.simplefilter("error", ht.TruncationWarning)
+```
+
+The fix is always the same: raise `n_max` until the warning stops, then confirm the
+answer has stopped moving.
+
 **Large Hilbert spaces** — flip the model to sparse storage; everything downstream
 switches automatically (sparse matvecs, `expm_multiply` on the Trotter path). Worth it
 above dimension ~10³; mandatory around 10⁴, where a dense H no longer fits in memory:

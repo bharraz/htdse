@@ -774,6 +774,44 @@ def ms_lamb_dicke2(participation=None, eta=None, detune=None, amplitudes=1.0,
 
 
 # ---------------------------------------------------------------------------
+# cutting a chain down to size
+# ---------------------------------------------------------------------------
+
+def select_modes(modes, mode_idx=None, ion_idx=None) -> list:
+    """Restrict a list of MSMode to a subset of modes and/or ions.
+
+    The reason this exists: an MSMode's `eta`/`detune`/`detune_red` are per-ion
+    ARRAYS, so taking "just these two ions" means slicing each of them on every
+    mode consistently -- fiddly and easy to get subtly wrong by hand, and the
+    pre-RWA cost grows as prod_m (n_max+1), so trimming modes is usually the
+    difference between a solve that runs and one that cannot be allocated.
+
+    mode_idx: indices into `modes` to keep (default: all).
+    ion_idx:  indices into each kept mode's per-ion arrays to keep (default:
+              all) -- e.g. [1, 3] to study just those two ions.
+
+    Returns a new list of MSMode (n_max/nu/name unchanged). Slice the matching
+    amplitude/phase lists yourself with the same `ion_idx`
+    (`[amplitudes[i] for i in ion_idx]`) -- those are plain lists, and pretending
+    to manage them here would just hide which arrays have to stay in step.
+    """
+    if mode_idx is None:
+        mode_idx = range(len(modes))
+    out = []
+    for m in mode_idx:
+        md = modes[m]
+
+        def sl(x):
+            if x is None:
+                return None
+            return np.asarray(x) if ion_idx is None else np.asarray(x)[ion_idx]
+
+        out.append(MSMode(eta=sl(md.eta), detune=sl(md.detune), n_max=md.n_max,
+                          nu=md.nu, name=md.name, detune_red=sl(md.detune_red)))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # phase-space plotting
 # ---------------------------------------------------------------------------
 

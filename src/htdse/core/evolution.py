@@ -10,6 +10,7 @@ from scipy.sparse.linalg import expm_multiply
 from . import config
 from .mechanism import provides_hamiltonian, provides_unitary
 from .operator import Operator
+from .truncation import resolve_threshold, warn_if_truncated
 from ..util import MAG_THRESHOLD
 
 
@@ -344,7 +345,8 @@ class HamiltonianEvolution:
     """
 
     def __init__(self, mechanism, initial: Operator, t0: float = 0.0,
-                 subsystems: dict | None = None, **solver_kwargs):
+                 subsystems: dict | None = None, truncation=None,
+                 ladders=None, **solver_kwargs):
         initial = initial if isinstance(initial, Operator) else Operator(initial)
         _reject_dissipative(mechanism, t0, "HamiltonianEvolution")
         _check_hermitian(mechanism.hamiltonian(t0))
@@ -354,9 +356,17 @@ class HamiltonianEvolution:
                                          label="HamiltonianEvolution", expm_ok=True,
                                          **solver_kwargs)
         self.subsystems = _default_subsystems(mechanism, subsystems)
+        self._truncation, self._ladders = truncation, ladders
+        self._trunc_seen = set()
 
     def state_at(self, t) -> Operator:
-        return self._solver.state_at(t)
+        state = self._solver.state_at(t)
+        # a matrix initial is a propagator / stack of kets, not a ket trajectory
+        kind = "ket" if self._solver.initial.ndim == 1 else "unitary"
+        warn_if_truncated(state, self.subsystems, kind,
+                          resolve_threshold(self._truncation), self._ladders,
+                          self._trunc_seen, "HamiltonianEvolution")
+        return state
 
     def _require_ket(self, what):
         """`state_at` returns (n_times, d) for an array t and (d, d) for a
@@ -433,9 +443,13 @@ class UnitaryEvolution:
     """
 
     def __init__(self, mechanism, initial: Operator | None = None, dim: int | None = None,
-                 t0: float = 0.0, **solver_kwargs):
+                 t0: float = 0.0, subsystems: dict | None = None,
+                 truncation=None, ladders=None, **solver_kwargs):
         _reject_dissipative(mechanism, t0, "UnitaryEvolution")
         self.mechanism = mechanism
+        self.subsystems = _default_subsystems(mechanism, subsystems)
+        self._truncation, self._ladders = truncation, ladders
+        self._trunc_seen = set()
         self._analytic = provides_unitary(mechanism) and not provides_hamiltonian(mechanism)
         if self._analytic:
             if initial is not None and not np.allclose(np.asarray(initial),
@@ -471,10 +485,16 @@ class UnitaryEvolution:
         """The propagator U(t) (scalar t) or a stack of them (array t)."""
         if self._analytic:
             if np.ndim(t) == 0:
-                return Operator(self.mechanism.unitary(t))
-            return Operator(np.array([np.asarray(self.mechanism.unitary(tt))
-                                      for tt in np.asarray(t)]))
-        return self._solver.state_at(t)
+                U = Operator(self.mechanism.unitary(t))
+            else:
+                U = Operator(np.array([np.asarray(self.mechanism.unitary(tt))
+                                       for tt in np.asarray(t)]))
+        else:
+            U = self._solver.state_at(t)
+        warn_if_truncated(U, self.subsystems, "unitary",
+                          resolve_threshold(self._truncation), self._ladders,
+                          self._trunc_seen, "UnitaryEvolution")
+        return U
 
     # kept as an alias: every evolution class answers state_at
     state_at = unitary_at
@@ -502,21 +522,32 @@ class DensityMatrixEvolution:
     """
 
     def __init__(self, mechanism, rho0: Operator, t0: float = 0.0,
-                 subsystems: dict | None = None, **solver_kwargs):
+                 subsystems: dict | None = None, truncation=None,
+                 ladders=None, **solver_kwargs):
         _reject_dissipative(mechanism, t0, "DensityMatrixEvolution")
         _check_density_matrix(rho0)
         self.mechanism = mechanism
         self.rho0 = rho0 if isinstance(rho0, Operator) else Operator(rho0)
         dim = self.rho0.shape[0]
-        self._U = UnitaryEvolution(mechanism, dim=dim, t0=t0, **solver_kwargs)
+        # the inner propagator's own guard is off: what matters physically is
+        # the ceiling population of rho, which depends on rho0, and warning
+        # about U as well would fire twice for one problem
+        self._U = UnitaryEvolution(mechanism, dim=dim, t0=t0,
+                                   truncation=False, **solver_kwargs)
         self.subsystems = _default_subsystems(mechanism, subsystems)
+        self._truncation, self._ladders = truncation, ladders
+        self._trunc_seen = set()
 
     def state_at(self, t) -> Operator:
         U = self._U.unitary_at(t)
         if U.ndim == 2:
-            return Operator(U @ self.rho0 @ U.conj().T)  # single time: U rho0 U^dagger
-        rho_t = np.einsum("nij,jk,nlk->nil", U, self.rho0, U.conj())  # batched over time axis n
-        return Operator(rho_t)
+            rho = Operator(U @ self.rho0 @ U.conj().T)  # single time: U rho0 U^dagger
+        else:
+            rho = Operator(np.einsum("nij,jk,nlk->nil", U, self.rho0, U.conj()))  # batched over time axis n
+        warn_if_truncated(rho, self.subsystems, "density",
+                          resolve_threshold(self._truncation), self._ladders,
+                          self._trunc_seen, "DensityMatrixEvolution")
+        return rho
 
     def unitarity_defect(self, t) -> float:
         return self._U.unitarity_defect(t)
@@ -566,7 +597,8 @@ class LindbladEvolution:
     """
 
     def __init__(self, mechanism, rho0: Operator, t0: float = 0.0,
-                 subsystems: dict | None = None, **solver_kwargs):
+                 subsystems: dict | None = None, truncation=None,
+                 ladders=None, **solver_kwargs):
         _check_density_matrix(rho0)
         _check_hermitian(mechanism.hamiltonian(t0))
         self.mechanism = mechanism
@@ -578,6 +610,8 @@ class LindbladEvolution:
                                          label="LindbladEvolution", expm_ok=False,
                                          **solver_kwargs)
         self.subsystems = _default_subsystems(mechanism, subsystems)
+        self._truncation, self._ladders = truncation, ladders
+        self._trunc_seen = set()
 
     def state_at(self, t) -> Operator:
         if np.any(np.asarray(t) < self.t0):
@@ -586,7 +620,14 @@ class LindbladEvolution:
                 "integration of a Lindbladian isn't guaranteed positive -- would "
                 "silently return a non-physical density matrix. Not supported."
             )
-        return self._solver.state_at(t)
+        rho = self._solver.state_at(t)
+        # heating is the canonical way to hit the ceiling: a mode driven by a
+        # thermal bath climbs the ladder indefinitely, so n_max chosen from the
+        # coherent dynamics alone is routinely too small here
+        warn_if_truncated(rho, self.subsystems, "density",
+                          resolve_threshold(self._truncation), self._ladders,
+                          self._trunc_seen, "LindbladEvolution")
+        return rho
 
     def trace_out(self, *names, t) -> Operator:
         """rho at time(s) t, tracing out the named subsystems (batched over t)."""

@@ -74,9 +74,60 @@ def ket(bitstring):
     """Returns the state vector corresponding to the bitstring (ex: '01' -> [0 1 0 0 ])"""
     n = len(bitstring)
     dim = 2**n
-    
+
     vec = np.zeros(dim, dtype=complex)
     index = binary_to_index(bitstring)
-    
+
     vec[index] = 1
     return vec
+
+def sampled_pulse(times, values, kind="linear"):
+    """Sampled data (times, values) -> a callable f(t), for `coeff=` / `amplitudes=`.
+
+    Every time-dependent quantity in htdse is a callable f(t); this is the
+    bridge from measured or solver-produced samples to that form.
+
+    times, values : 1D arrays of the SAME length -- one value per time point.
+    kind:
+      "linear"   (default) -- values sit AT the sample times; np.interp ramps
+                 linearly between them. This is the usual convention for a
+                 solved pulse (a ramp/spline between solved amplitude points).
+      "previous" -- zero-order hold: the value in effect from a sample time
+                 until the next one (a piecewise-constant/step waveform).
+
+    Outside [times[0], times[-1]] the edge value is held (no extrapolation) --
+    querying past the pulse's own window is a setup error, and holding the
+    boundary keeps a continuation solve well-defined rather than raising for
+    time points reached only through a solver's floating-point roundoff.
+
+    SIGN IS PASSED THROUGH UNTOUCHED -- never clipped, rectified or abs()'d.
+    A negative sample is physically meaningful: wherever a drive amplitude
+    multiplies a spin operator as a plain signed real (as it does throughout,
+    e.g. the MS suite's carrier / spin-dependent-force / eta^2 terms), a sign
+    flip IS a pi phase shift, since Omega*sigma_theta == (-Omega)*sigma_{theta+pi}.
+
+    Returns a scalar-in/scalar-out callable that also accepts a numpy array
+    (both branches are array-vectorized), which is what lets a caller's array
+    fast path evaluate a whole grid in one call instead of looping.
+    """
+    times = np.asarray(times, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if times.shape != values.shape:
+        raise ValueError(f"sampled_pulse: times and values must be the same "
+                         f"length, got {times.shape} and {values.shape}. "
+                         f"(A common mismatch: a solver's cumulative time "
+                         f"BREAKPOINTS array has one more entry than its "
+                         f"per-segment amplitude array -- trim or resample "
+                         f"one of them first; this function does not guess.)")
+    if np.any(np.diff(times) <= 0):
+        raise ValueError("sampled_pulse: times must be strictly increasing")
+
+    if kind == "linear":
+        return lambda t: np.interp(t, times, values)
+    if kind == "previous":
+        def step(t):
+            idx = np.clip(np.searchsorted(times, t, side="right") - 1,
+                         0, len(times) - 1)
+            return values[idx]
+        return step
+    raise ValueError(f"sampled_pulse: kind must be 'linear' or 'previous', got {kind!r}")
