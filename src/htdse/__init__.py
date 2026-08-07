@@ -9,7 +9,7 @@ Everything a physicist reaches for interactively is importable from the top:
 from .core.config import quiet, no_truncation_check
 from .core.truncation import TruncationWarning, truncation_populations
 from .core.mechanism import Mechanism
-from .core.terms import Model, term, jump, hconj
+from .core.terms import Model, term, jump, plus_hc
 from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
                              DensityMatrixEvolution, LindbladEvolution)
 from .core.subsystems import embed, partial_trace
@@ -22,7 +22,7 @@ from .util import (MAG_THRESHOLD, otimes, ket, projector, fidelity,
 
 __all__ = [
     "quiet", "no_truncation_check", "TruncationWarning", "truncation_populations",
-    "Mechanism", "Model", "term", "jump", "hconj",
+    "Mechanism", "Model", "term", "jump", "plus_hc",
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
     "LindbladEvolution", "embed", "partial_trace", "compare_over", "converged",
     "magnus", "magnus_pauli", "pauli_decompose",

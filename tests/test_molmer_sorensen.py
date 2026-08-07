@@ -65,7 +65,7 @@ check("geometric phase matches analytic", abs(Th[0, 1] - Th_ana) < 1e-6 * abs(Th
 print("== ideal gate physics at loop closure ==")
 # at t=T: alpha=0, U = exp(i sum Theta_jk S_j S_k); entangling angle = 2*Theta_01
 chi = 2 * Th_ana
-psi0 = np.asarray(otimes(ket("00"), fock(0, n_max)))
+psi0 = otimes(ket("00"), fock(0, n_max))
 with quiet():
     psiT = np.asarray(UnitaryEvolution(H_rwa, dim=mag.dim).unitary_at(T)) @ np.asarray(psi0)
 # expected: exp(i chi S0 S1)|00,0>; S = sigma_{pi/2} = sigma_y here (phi=0)
@@ -127,7 +127,7 @@ check("plot_phase_space on Magnus alpha", ax is not None)
 Sphi = sigma_y  # Phi = pi/2 for phi = 0
 _, evecs = np.linalg.eigh(Sphi)
 plus = evecs[:, 1]  # +1 eigenvector
-psi_branch = np.asarray(otimes(plus, plus, fock(0, n_max)))
+psi_branch = otimes(plus, plus, fock(0, n_max))
 with quiet():
     ev_b = HamiltonianEvolution(H_rwa, psi_branch)
     a_meas = expectation_alpha(ev_b, np.linspace(0, T, 60))

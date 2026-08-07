@@ -14,7 +14,7 @@ Because terms carry subsystem *names*, composition is literal:
 
     H_atom = term(0.5 * w0 * sigma_z, on="spin")  # term factory function (bottom of file)
     H_mode = term(w * number_op, on="mode")
-    H_jc   = hconj(term({"spin": sigma_plus, "mode": a}, coeff=g))
+    H_jc   = plus_hc(term({"spin": sigma_plus, "mode": a}, coeff=g))
     H      = H_atom + H_mode + H_jc          # names do the embedding
 
 `+` takes the union of the registries (same name must mean same dimension;
@@ -240,7 +240,7 @@ class Model(Mechanism):
         """Hermitian conjugate of every Hamiltonian term: (A x B)^dag with the
         coefficient conjugated, groups keeping their names. This is the `h.c.`
         of a paper Hamiltonian -- `H_int + H_int.dag()` completes a coupling
-        written one-way (or use `hconj(H_int)` for the same thing in one call).
+        written one-way (or use `plus_hc(H_int)` for the same thing in one call).
 
         Caveat: jump operators are DROPPED, not conjugated -- L^dag is a
         physically different channel, and carrying jumps through `h + h.dag()`
@@ -468,7 +468,7 @@ def jump(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     return Model(term_dims, jumps={key: [t]})
 
 
-def hconj(h: Model) -> Model:
+def plus_hc(h: Model) -> Model:
     """h + h.dag() -- the ubiquitous `X + h.c.` pattern in one call.
 
     Any jump operators on `h` ride through exactly once (see `dag`): only the

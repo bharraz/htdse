@@ -47,7 +47,7 @@ For one you build yourself, compose named terms:
 ```python
 H = (ht.term(0.5 * w0 * sigma_z, on="spin", name="atom")
      + ht.term(w * number_op,    on="mode", name="mode")
-     + ht.hconj(ht.term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc")))
+     + ht.plus_hc(ht.term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc")))
 ```
 
 Terms tagged `"mode"` land on the same factor; identity-padding is automatic; no matrix

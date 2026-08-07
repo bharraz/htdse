@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import htdse as ht
-from htdse import (Mechanism, Model, term, jump, hconj,
+from htdse import (Mechanism, Model, term, jump, plus_hc,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, embed, partial_trace, compare_over,
                    otimes, ket, fidelity, process_fidelity, density_fidelity, quiet)
@@ -83,7 +83,7 @@ nop = number_operator(n_max)
 w0, w, g = 1.3, 1.3, 0.11  # resonant
 atom = term(0.5 * w0 * sigma_z, on="spin", name="atom")
 mode = term(w * nop, on="mode", name="mode")
-jc = hconj(term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc"))
+jc = plus_hc(term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc"))
 H = atom + mode + jc
 manual = (0.5 * w0 * np.kron(sigma_z, np.eye(n_max + 1)) + w * np.kron(I2, nop)
           + g * (np.kron(sigma_plus, a) + np.kron(sigma_minus, a.conj().T)))
@@ -132,7 +132,7 @@ with warnings.catch_warnings(record=True) as wlist:
 check("frame mixing warns", any("frames" in str(x.message) for x in wlist))
 
 print("== physics: vacuum Rabi oscillation from composed JC ==")
-psi0 = np.asarray(np.kron(ket("0"), fock(0, n_max)))  # |e, 0>
+psi0 = np.kron(ket("0"), fock(0, n_max))  # |e, 0>
 with quiet():
     ev = HamiltonianEvolution(H, psi0)  # subsystems auto-supplied by the term layer
     ts = np.linspace(0, 2 * np.pi / g, 60)
@@ -168,7 +168,7 @@ check("mode decays at rate gamma", abs(n_of_t - np.exp(-gamma * 3.0)) < 1e-4)
 print("== guards ==")
 mech = RabiDrive(1.0)
 with quiet():
-    ev2 = HamiltonianEvolution(mech, np.asarray(ket("0")))
+    ev2 = HamiltonianEvolution(mech, ket("0"))
     ev2.state_at(1.0)
 mech.Omega = 2.0  # mutate after binding -- must be detected
 try:
@@ -180,7 +180,7 @@ except RuntimeError:
 
 try:
     with quiet():
-        HamiltonianEvolution(ThermalMotionalDecoherence(3, gamma_a=1.0), np.asarray(fock(0, 3)))
+        HamiltonianEvolution(ThermalMotionalDecoherence(3, gamma_a=1.0), fock(0, 3))
     check("dissipative mech rejected by closed-system class", False)
 except ValueError:
     check("dissipative mech rejected by closed-system class", True)
@@ -188,19 +188,19 @@ except ValueError:
 
 class BadMech(Mechanism):
     def hamiltonian(self, t):
-        return np.asarray(np.array([[0, 1], [0, 0]], dtype=complex))  # not Hermitian
+        return np.array([[0, 1], [0, 0]], dtype=complex)  # not Hermitian
 
 
 try:
     with quiet():
-        HamiltonianEvolution(BadMech(), np.asarray(ket("0")))
+        HamiltonianEvolution(BadMech(), ket("0"))
     check("non-Hermitian H rejected", False)
 except ValueError:
     check("non-Hermitian H rejected", True)
 
 with quiet():
     lev2 = LindbladEvolution(ThermalMotionalDecoherence(3, gamma_a=1.0, nbar=0.1),
-                             np.asarray(np.outer(fock(0, 3), fock(0, 3).conj())))
+                             np.outer(fock(0, 3), fock(0, 3).conj()))
 try:
     lev2.state_at(-1.0)
     check("Lindblad backward rejected", False)
@@ -209,7 +209,7 @@ except ValueError:
 
 try:
     with quiet():
-        DensityMatrixEvolution(RabiDrive(1.0), np.asarray(sigma_x))  # not a density matrix
+        DensityMatrixEvolution(RabiDrive(1.0), sigma_x)  # not a density matrix
     check("non-Hermitian-positive rho0... (hermitian but trace 0) warns", False)
 except Exception:
     check("non-Hermitian-positive rho0... (hermitian but trace 0) warns", True)
@@ -229,11 +229,11 @@ class Ramp(Mechanism):
 
 T = 4.0
 with quiet():
-    exact = HamiltonianEvolution(Ramp(T), np.asarray(ket("0"))).state_at(T)
+    exact = HamiltonianEvolution(Ramp(T), ket("0")).state_at(T)
     trot200 = HamiltonianEvolution(TrotterizedMechanism(Ramp(T), 0, T, 200),
-                                   np.asarray(ket("0"))).state_at(T)
+                                   ket("0")).state_at(T)
     trot20 = HamiltonianEvolution(TrotterizedMechanism(Ramp(T), 0, T, 20),
-                                  np.asarray(ket("0"))).state_at(T)
+                                  ket("0")).state_at(T)
 err200 = 1 - fidelity(exact, trot200)
 err20 = 1 - fidelity(exact, trot20)
 check("Trotter converges to exact", err200 < 1e-5)
@@ -242,7 +242,7 @@ check("Trotter error shrinks with steps", err200 < err20 / 10)
 # one-step trotter must EXACTLY equal the eigh propagator (expm path, no ODE)
 with quiet():
     one = HamiltonianEvolution(TrotterizedMechanism(Ramp(T), 0, T, 1),
-                               np.asarray(ket("0"))).state_at(T)
+                               ket("0")).state_at(T)
 Hmid = np.asarray(Ramp(T).hamiltonian(T / 2))
 E, V = np.linalg.eigh(Hmid)
 expected_one = V @ (np.exp(-1j * E * T) * (V.conj().T @ ket("0")))
@@ -264,7 +264,7 @@ class AnalyticGate(Mechanism):
 
     def unitary(self, t):
         th = self.Omega * t / 2
-        return np.asarray(np.cos(th) * I2 - 1j * np.sin(th) * sigma_x)
+        return np.cos(th) * I2 - 1j * np.sin(th) * sigma_x
 
 
 with quiet():
@@ -272,7 +272,7 @@ with quiet():
     Ur = UnitaryEvolution(RabiDrive(1.0), dim=2).unitary_at(np.pi)
 check("analytic unitary consumed directly", process_fidelity(Ua, Ur) > 1 - 1e-7)
 with quiet():
-    dm = DensityMatrixEvolution(AnalyticGate(1.0), np.asarray(np.outer(ket("0"), ket("0"))))
+    dm = DensityMatrixEvolution(AnalyticGate(1.0), np.outer(ket("0"), ket("0")))
     rho_pi = dm.state_at(np.pi)
 check("DensityMatrixEvolution on analytic unitary", abs(np.real(rho_pi[1, 1]) - 1) < 1e-9)
 
@@ -287,7 +287,7 @@ nm2 = 15
 psi01 = (fock(0, nm2) + fock(1, nm2)) / np.sqrt(2)
 with quiet():
     levT = LindbladEvolution(ThermalMotionalDecoherence(nm2, gamma_a, nbar, gamma_p),
-                             np.asarray(np.outer(psi01, psi01.conj())))
+                             np.outer(psi01, psi01.conj()))
     dt = 1e-3  # early time: rho12 = 0, so re-feeding hasn't kicked in -- pure leading order
     c0 = abs(np.asarray(levT.state_at(0.0))[0, 1])
     c1 = abs(np.asarray(levT.state_at(dt))[0, 1])
@@ -306,19 +306,19 @@ check("pauli_term product on one qubit",
 
 with quiet():
     F = compare_over(np.linspace(0, np.pi, 9),
-                     HamiltonianEvolution(RabiDrive(1.0), np.asarray(ket("0"))),
-                     HamiltonianEvolution(RabiDrive(1.0, eps=0.05), np.asarray(ket("0"))),
+                     HamiltonianEvolution(RabiDrive(1.0), ket("0")),
+                     HamiltonianEvolution(RabiDrive(1.0, eps=0.05), ket("0")),
                      metric=fidelity)
 check("compare_over returns per-t metric", F.shape == (9,) and abs(F[0] - 1) < 1e-12)
 
 # adapter usage: compare joint realized vs 1-qubit target through trace_out
 with quiet():
     joint = HamiltonianEvolution(atom + term(0.0 * nop, on="mode", name="m"),
-                                 np.asarray(np.kron(ket("0"), fock(0, n_max))))
-    tgt = HamiltonianEvolution(term(0.5 * w0 * sigma_z, on="spin"), np.asarray(ket("0")))
+                                 np.kron(ket("0"), fock(0, n_max)))
+    tgt = HamiltonianEvolution(term(0.5 * w0 * sigma_z, on="spin"), ket("0"))
     Fa = compare_over([0.5, 1.0], tgt, joint, metric=lambda p, r: density_fidelity(r, p),
                       realized_adapter=lambda ps: partial_trace(
-                          np.asarray(np.outer(ps, ps.conj())), joint.subsystems, ("mode",)))
+                          np.outer(ps, ps.conj()), joint.subsystems, ("mode",)))
 check("compare_over with trace adapter", np.allclose(Fa, 1, atol=1e-8))
 
 with quiet():
@@ -335,13 +335,13 @@ check("vectorized adiabatic_fidelity", af.shape == (5,) and np.all(af > 0.5))
 # quiet() actually silences
 buf = io.StringIO()
 with redirect_stdout(buf), quiet():
-    HamiltonianEvolution(RabiDrive(1.0), np.asarray(ket("0"))).state_at(1.0)
+    HamiltonianEvolution(RabiDrive(1.0), ket("0")).state_at(1.0)
 check("quiet() silences solver prints", buf.getvalue() == "")
 
 # verbose default prints
 buf = io.StringIO()
 with redirect_stdout(buf):
-    HamiltonianEvolution(RabiDrive(1.0), np.asarray(ket("0"))).state_at(1.0)
+    HamiltonianEvolution(RabiDrive(1.0), ket("0")).state_at(1.0)
 check("verbose default prints the integration", "integrating" in buf.getvalue())
 
 print("== magnus / pauli utility ==")
@@ -410,9 +410,9 @@ check("sparse time-dependent H(t) == dense",
 
 check("sparse flag sticky under +", (Hs + term(nop, on="mode")).is_sparse)
 check("sparse flag sticky under + (other side)", (atom + mode.sparse()).is_sparse)
-check("sparse flag survives *, -, dag, hconj, replace, without, group",
+check("sparse flag survives *, -, dag, plus_hc, replace, without, group",
       (2.0 * Hs).is_sparse and (Hs - atom).is_sparse and Hs.dag().is_sparse
-      and hconj(Hs).is_sparse
+      and plus_hc(Hs).is_sparse
       and (atom + drive).sparse().replace(drive=noisy).is_sparse
       and Hs.without("jc").is_sparse and Hs.group("atom").is_sparse)
 check("sparse(False) toggles back to a dense ndarray",
@@ -450,9 +450,9 @@ ramp_model = (term(sigma_x, on="q", coeff=lambda t: 1 - np.clip(t / T, 0, 1), na
               + term(sigma_z, on="q", coeff=lambda t: np.clip(t / T, 0, 1), name="z"))
 with quiet():
     trot_d = HamiltonianEvolution(TrotterizedMechanism(ramp_model, 0, T, 40),
-                                  np.asarray(ket("0"))).state_at(T)
+                                  ket("0")).state_at(T)
     trot_s = HamiltonianEvolution(TrotterizedMechanism(ramp_model.sparse(), 0, T, 40),
-                                  np.asarray(ket("0"))).state_at(T)
+                                  ket("0")).state_at(T)
 check("sparse expm_multiply path == dense eigh path",
       np.allclose(np.asarray(trot_s), np.asarray(trot_d), atol=1e-10))
 with quiet():
@@ -470,13 +470,13 @@ check("sparse LindbladEvolution == dense",
 try:
     with quiet():
         HamiltonianEvolution(term(np.array([[0, 1], [0, 0]], dtype=complex),
-                                  on="q").sparse(), np.asarray(ket("0")))
+                                  on="q").sparse(), ket("0"))
     check("non-Hermitian sparse H rejected", False)
 except ValueError:
     check("non-Hermitian sparse H rejected", True)
 try:
     with quiet():
-        HamiltonianEvolution(open_s, np.asarray(np.kron(ket("0"), fock(0, n_max))))
+        HamiltonianEvolution(open_s, np.kron(ket("0"), fock(0, n_max)))
     check("dissipative sparse model rejected by closed-system class", False)
 except ValueError:
     check("dissipative sparse model rejected by closed-system class", True)
@@ -606,7 +606,7 @@ else:
     _n = 8
     _a, _nop = annihilation(_n), number_operator(_n)
     _H = (term(0.65 * sigma_z, on="spin", name="atom") + term(1.3 * _nop, on="mode", name="mode")
-          + hconj(term({"spin": sigma_plus, "mode": _a}, coeff=0.11, name="jc")))
+          + plus_hc(term({"spin": sigma_plus, "mode": _a}, coeff=0.11, name="jc")))
     _psi0 = np.kron(ket("0"), fock(0, _n))
     _ts = np.linspace(0, 2 * np.pi / 0.11, 40)
     with quiet():
@@ -630,7 +630,7 @@ else:
     _Hq, _c = to_qutip(_H)
     check("static Model -> bare Qobj, no c_ops", isinstance(_Hq, _qt.Qobj) and _c == [])
     _r = _qt.sesolve(_Hq, to_qobj(_psi0, _H.subsystems), _ts)
-    _qp = np.abs(np.array([np.asarray(s.full()).ravel() for s in _r.states]) @ _psi0.conj()) ** 2
+    _qp = np.abs(np.array([s.full().ravel() for s in _r.states]) @ _psi0.conj()) ** 2
     check("qutip sesolve == htdse on the same composed Model",
           np.max(np.abs(_qp - _ref)) < 1e-5)
 
@@ -642,7 +642,7 @@ else:
           isinstance(_Hq2, list) and isinstance(_Hq2[1], list)
           and isinstance(_Hq2[1][0], _qt.Qobj) and callable(_Hq2[1][1]))
     _r2 = _qt.sesolve(_Hq2, to_qobj(_psi0, _Ht.subsystems), _ts)
-    _q2 = np.abs(np.array([np.asarray(s.full()).ravel() for s in _r2.states]) @ _psi0.conj()) ** 2
+    _q2 = np.abs(np.array([s.full().ravel() for s in _r2.states]) @ _psi0.conj()) ** 2
     with quiet():
         _h2 = np.abs(HamiltonianEvolution(_Ht, _psi0).state_at(_ts) @ _psi0.conj()) ** 2
     check("qutip == htdse on a time-dependent Model", np.max(np.abs(_q2 - _h2)) < 1e-5)

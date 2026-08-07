@@ -93,7 +93,7 @@ from scipy.linalg import expm
 
 from ..core.mechanism import Mechanism
 from ..core.subsystems import embed
-from ..core.terms import Model, hconj, term
+from ..core.terms import Model, plus_hc, term
 from .harmonic_oscillator import annihilation
 from .spin import sigma_x, sigma_y
 
@@ -560,7 +560,7 @@ def _tone_group(H, q, j, modes, ops, mu_j, Om_fn, phi_fn, order, tag, sign=1):
             return -(e / 2) * Om_fn(t) * cmath.exp(1j * nu_m * t) \
                    * math.sin(sign * mu_j * t + phi_fn(t) + math.pi / 2)
         sdf = f"sdf_{q}_{md.name}_{tag}"
-        H = H + hconj(term({q: sigma_x, md.name: adag}, coeff=gx, name=sdf)
+        H = H + plus_hc(term({q: sigma_x, md.name: adag}, coeff=gx, name=sdf)
                       + term({q: sigma_y, md.name: adag}, coeff=gy, name=sdf))
         if order >= 2:
             n_op = adag @ a
@@ -575,7 +575,7 @@ def _tone_group(H, q, j, modes, ops, mu_j, Om_fn, phi_fn, order, tag, sign=1):
                 return pref * Om_fn(t) * math.sin(sign * mu_j * t + phi_fn(t))
             two_n_plus_1 = 2 * n_op + np.eye(md.n_max + 1)
             ld2 = f"ld2_{q}_{md.name}_{tag}"
-            H = H + hconj(term({q: sigma_x, md.name: adag @ adag}, coeff=h2x, name=ld2)
+            H = H + plus_hc(term({q: sigma_x, md.name: adag @ adag}, coeff=h2x, name=ld2)
                           + term({q: sigma_y, md.name: adag @ adag}, coeff=h2y, name=ld2)) \
                   + term({q: sigma_x, md.name: two_n_plus_1}, coeff=h0x, name=ld2) \
                   + term({q: sigma_y, md.name: two_n_plus_1}, coeff=h0y, name=ld2)
@@ -675,14 +675,14 @@ def _ms_lamb_dicke(modes, n_ions, amplitudes, phases, motion_phases,
             # single mode keeps the historical group name; multi-mode tags the mode
             sdf = f"sdf_{q}" if single else f"sdf_{q}_{md.name}"
             if rwa:
-                # post-RWA spin-dependent force: hconj( sigma_Phi (x) f_{j,m}(t) a_m^dag )
+                # post-RWA spin-dependent force: plus_hc( sigma_Phi (x) f_{j,m}(t) a_m^dag )
                 kern = _memo1(lambda t, e=e_jm, d=d_jm, Omj=Omj, psij=psij:
                               -(e * Omj(t) / 2) * cmath.exp(-1j * (d * t + psij(t))))
                 def fx(t, kern=kern, cs=cs):
                     return kern(t) * (-cs(t)[1])
                 def fy(t, kern=kern, cs=cs):
                     return kern(t) * cs(t)[0]
-                H = H + hconj(term({q: sigma_x, md.name: adag}, coeff=fx, name=sdf)
+                H = H + plus_hc(term({q: sigma_x, md.name: adag}, coeff=fx, name=sdf)
                               + term({q: sigma_y, md.name: adag}, coeff=fy, name=sdf))
                 continue
             # ---- eta^1: -eta_{j,m} Omega cos(mu t + psi) sigma_Phi X_m(t) ----
@@ -692,7 +692,7 @@ def _ms_lamb_dicke(modes, n_ions, amplitudes, phases, motion_phases,
                 return -e * drive(t) * enu(t) * (-cs(t)[1])
             def gy(t, e=e_jm, drive=drive, enu=enu, cs=cs):
                 return -e * drive(t) * enu(t) * cs(t)[0]
-            H = H + hconj(term({q: sigma_x, md.name: adag}, coeff=gx, name=sdf)
+            H = H + plus_hc(term({q: sigma_x, md.name: adag}, coeff=gx, name=sdf)
                           + term({q: sigma_y, md.name: adag}, coeff=gy, name=sdf))
             if order >= 2:
                 # ---- eta^2: -(eta_{j,m}^2/2) Omega cos(mu t + psi) sigma_phi
@@ -709,7 +709,7 @@ def _ms_lamb_dicke(modes, n_ions, amplitudes, phases, motion_phases,
                 def h0y(t, pref=pref, drive=drive, cs=cs):
                     return pref * drive(t) * cs(t)[1]
                 two_n_plus_1 = 2 * n_op + np.eye(md.n_max + 1)
-                H = H + hconj(term({q: sigma_x, md.name: adag @ adag}, coeff=h2x,
+                H = H + plus_hc(term({q: sigma_x, md.name: adag @ adag}, coeff=h2x,
                                    name=f"ld2_{q}")
                               + term({q: sigma_y, md.name: adag @ adag}, coeff=h2y,
                                      name=f"ld2_{q}")) \

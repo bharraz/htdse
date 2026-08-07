@@ -94,7 +94,7 @@ same tensor factor, so `+` lines them up and identity-pads automatically. You ne
 ```python
 atom = term(0.5 * w0 * sigma_z, on="spin", name="atom")
 mode = term(w * number_op,      on="mode", name="mode")
-jc   = hconj(term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc"))  # g s+ a + h.c.
+jc   = plus_hc(term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc"))  # g s+ a + h.c.
 H    = atom + mode + jc      # Jaynes–Cummings; names did the embedding
 ```
 
