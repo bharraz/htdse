@@ -5,7 +5,6 @@ dephased motional mode (e.g. trapped-ion motional heating/dephasing).
 import numpy as np
 
 from ..core.mechanism import Mechanism
-from ..core.operator import Operator
 
 
 def annihilation(n_max: int) -> np.ndarray:
@@ -76,8 +75,8 @@ class ThermalMotionalDecoherence(Mechanism):
         self._jumps_key = None  # the rates _jumps was built from
         self.subsystems = {"mode": self.dim}
 
-    def hamiltonian(self, t) -> Operator:
-        return Operator(np.zeros((self.dim, self.dim), dtype=complex))  # no coherent term
+    def hamiltonian(self, t) -> np.ndarray:
+        return np.zeros((self.dim, self.dim), dtype=complex)  # no coherent term
 
     def jump_operators(self, t) -> list:
         # Time-independent, so build once rather than per rhs eval -- but key the
@@ -90,11 +89,11 @@ class ThermalMotionalDecoherence(Mechanism):
             gamma_a, nbar, gamma_p = key
             ops = []
             if gamma_a > 0 and nbar > 0:
-                ops.append(Operator(np.sqrt(gamma_a * nbar) * self._a.conj().T))  # heating
+                ops.append(np.asarray(np.sqrt(gamma_a * nbar) * self._a.conj().T))  # heating
             if gamma_a > 0:
-                ops.append(Operator(np.sqrt(gamma_a * (nbar + 1)) * self._a))  # cooling
+                ops.append(np.sqrt(gamma_a * (nbar + 1)) * self._a)  # cooling
             if gamma_p > 0:
-                ops.append(Operator(np.sqrt(gamma_p) * self._n))  # pure dephasing
+                ops.append(np.sqrt(gamma_p) * self._n)  # pure dephasing
             self._jumps, self._jumps_key = ops, key
         return self._jumps
 

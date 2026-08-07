@@ -1,7 +1,6 @@
 import numpy as np
 from scipy import sparse as _sp
 
-from .operator import Operator
 
 
 def _total_dim(dims: dict) -> int:
@@ -18,7 +17,7 @@ def _check_dims(rho, dims: dict) -> None:
                          f"but the operator has dimension {rho.shape[-1]}")
 
 
-def partial_trace(rho: Operator, dims: dict, trace_out: tuple) -> Operator:
+def partial_trace(rho, dims: dict, trace_out: tuple) -> np.ndarray:
     """Partial trace of a density matrix over named subsystems.
 
     H = H_1 (x) ... (x) H_N, `dims` = {name: dim(H_i)} in tensor-product order.
@@ -58,10 +57,10 @@ def partial_trace(rho: Operator, dims: dict, trace_out: tuple) -> Operator:
         N -= 1
 
     kept_dim = int(np.prod([dims[n] for n in names])) if names else 1
-    return Operator(tensor.reshape(*batch, kept_dim, kept_dim))  # back to flat matrices
+    return np.asarray(tensor.reshape(*batch, kept_dim, kept_dim))  # back to flat matrices
 
 
-def embed(op: Operator, dims: dict, subsystem) -> Operator:
+def embed(op, dims: dict, subsystem) -> np.ndarray:
     """Lift `op` into the full joint space defined by `dims` ({name: dim},
     in tensor-product order), acting as identity everywhere it isn't defined.
 
@@ -76,7 +75,7 @@ def embed(op: Operator, dims: dict, subsystem) -> Operator:
 
     A scipy.sparse `op` returns a sparse (CSR) result -- the whole computation
     stays sparse (kron with a sparse identity, permutation as an O(nnz) index
-    remap), so the dense joint matrix is never formed. Dense in -> `Operator`
+    remap), so the dense joint matrix is never formed. Dense in -> dense ndarray
     out; sparse in -> CSR out.
     """
     names = list(dims.keys())
@@ -110,7 +109,7 @@ def embed(op: Operator, dims: dict, subsystem) -> Operator:
     big = np.kron(op, np.eye(d_rest, dtype=complex))  # ordered: involved..., rest...
 
     if order_now == names:
-        return Operator(big)  # already in canonical order, no permutation needed
+        return np.asarray(big)  # already in canonical order, no permutation needed
 
     # permute tensor factors from (involved..., rest...) into `dims` order
     shape_now = [dims[n] for n in order_now]
@@ -119,7 +118,7 @@ def embed(op: Operator, dims: dict, subsystem) -> Operator:
     tensor = big.reshape(shape_now + shape_now)
     tensor = tensor.transpose(perm + [p + n for p in perm])  # rows and columns together
     D = _total_dim(dims)
-    return Operator(tensor.reshape(D, D))
+    return np.asarray(tensor.reshape(D, D))
 
 
 def _permute_factors_sparse(big, dims: dict, order_now: list):
@@ -146,7 +145,7 @@ def _permute_factors_sparse(big, dims: dict, order_now: list):
     return _sp.coo_matrix((big.data, (new_rows, new_cols)), shape=(D, D)).tocsr()
 
 
-def apply(state, op, dims: dict, on) -> Operator:
+def apply(state, op, dims: dict, on) -> np.ndarray:
     """Apply a local operator `op` on named subsystem(s) `on` to a ket or a
     density matrix, leaving the other subsystems alone.
 
@@ -164,8 +163,8 @@ def apply(state, op, dims: dict, on) -> Operator:
     U = embed(op, dims, on)
     arr = np.asarray(state)
     if arr.ndim == 1:
-        return Operator(U @ arr)
-    return Operator(U @ arr @ U.conj().T)
+        return np.asarray(U @ arr)
+    return np.asarray(U @ arr @ U.conj().T)
 
 
 def project(state, dims: dict, on, onto):
@@ -196,5 +195,5 @@ def project(state, dims: dict, on, onto):
     if p < 1e-12:
         raise ValueError(f"measurement outcome has ~zero probability ({p:.3g}); "
                          "cannot condition on it")
-    reduced = partial_trace(Operator(collapsed / p), dims, on)
+    reduced = partial_trace(np.asarray(collapsed / p), dims, on)
     return reduced, p
