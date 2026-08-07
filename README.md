@@ -2,12 +2,18 @@
 
 NOTE: Written with significant help from AI (Claude). Built over many revisions, stemming from human design.
 
-A framework for a recurring physics problem: you have a **target** (what a system is
-*supposed* to do) and a **mechanism** that produces the **realized** dynamics from actual
-experimental parameters — Trotterization, motional coupling, shaped pulses, dissipation.
-htdse lets you compose both from named pieces, evolve them, and measure how reality
-deviates from the target, without rewriting the TDSE/comparison/plotting scaffolding for
-every experiment.
+A small, transparent time-dependent Schrödinger/Lindblad solver.
+
+- **Transparent.** No wrapper types. You hand it numpy arrays and get numpy arrays back
+  (scipy CSR if you asked for sparse). Every intermediate is inspectable, and every
+  approximation is a constructor argument rather than a hidden default.
+- **Lightweight.** numpy, scipy, matplotlib. ~3.5k lines. You can read all of it.
+- **Extensible.** A mechanism is any object with `hamiltonian(t)`. That is the whole
+  protocol — writing your own submodule means writing physics, not plumbing.
+
+It composes Hamiltonians from *named* pieces, so building a variant of a model (with an
+error term, a swapped drive, a different approximation) is a one-line edit rather than a
+rewrite. Comparing the variant to the original is what most of the package is for.
 
 ## Install
 
@@ -17,8 +23,7 @@ pip install -e .
 
 ## Quickstart
 
-A Rabi drive, and the same drive with a 5% amplitude error plus a stray detuning —
-composed, evolved, and compared in ~15 lines:
+A Rabi drive, and the same drive with a 5% amplitude error plus a stray detuning:
 
 ```python
 import numpy as np
@@ -40,26 +45,33 @@ with ht.quiet():
 print(f"worst-case fidelity: {F.min():.4f}")
 ```
 
-That's the whole shape of the package: build a model out of *named* terms, swap the
-error-bearing pieces in with `replace()`, evolve both sides, compare with an explicit
-metric. [GUIDE.md](GUIDE.md) walks through each step; every demo notebook is a variation
-on this loop.
+## The five things you need
+
+The package exports about thirty names. These five cover most work; everything else is
+either a convenience or an escape hatch you will find when you need it.
+
+| | |
+|---|---|
+| `ht.term(op, on="name")` | one piece of a Hamiltonian, tagged with the subsystem it acts on |
+| `+` | compose pieces into a `Model` (names do the tensor bookkeeping) |
+| `ht.HamiltonianEvolution(model, psi0)` | solve it (or `Unitary` / `DensityMatrix` / `Lindblad`) |
+| `.state_at(t)` | the answer, at a time or an array of times |
+| `ht.fidelity(a, b)` | compare two answers |
 
 ## The hierarchy
 
-Everything in the package is one of five kinds of object, stacked. Lower layers are the
-ingredients of the ones above:
+Five kinds of object, stacked. Lower layers are the ingredients of the ones above:
 
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 60, "nodeSpacing": 50}}}%%
 flowchart BT
-    OP["<b>numpy array</b><br/>a matrix or vector — a Hamiltonian, a ket, a density matrix, a propagator.<br/>Not wrapped in a type of our own: what you get back IS an ndarray (or a scipy<br/>CSR matrix for sparse Models), so every numpy/scipy tool works on it directly"]
+    OP["<b>numpy array</b><br/>a Hamiltonian, a ket, a density matrix, a propagator.<br/>Not wrapped in a type of our own, so every numpy/scipy tool works directly"]
 
-    TERM["<b>Term</b><br/>A coefficient (a number, or f(t)) times local operators,<br/>each operator tagged with the subsystem it acts on<br/><i>e.g. term(0.5 * sigma_z, on='spin')</i>"]
+    TERM["<b>Term</b><br/>a coefficient (a number, or f(t)) times local operators,<br/>each tagged with the subsystem it acts on<br/><i>e.g. term(0.5 * sigma_z, on='spin')</i>"]
 
-    MODEL["<b>Model</b><br/>Groups of terms, acting on a registry of subsystems. The subsystem registry and groups are both stored in dictionaries where the key is the label. Group labels are used to replace/retrieve/remove and subsystem labels are used to embed local operators in the correct order. — not a matrix, it builds H(t) on demand<br/><i>e.g. registry = {'spin': 2, 'mode': 13}; use H.sparse() for large registries</i>"]
+    MODEL["<b>Model</b><br/>groups of terms over a registry of subsystems, both dicts keyed by label.<br/>Group labels replace/retrieve/remove physics; subsystem labels fix the embedding order.<br/>Not a matrix — it builds H(t) on demand<br/><i>e.g. registry = {'spin': 2, 'mode': 13}; H.sparse() for large ones</i>"]
 
-    MECH["<b>Mechanism</b><br/>anything that implements hamiltonian(t) and/or unitary(t), plus jump_operators(t)<br/><i>e.g. a Model is one; a hand-written class (MSMagnus, ...) is another</i>"]
+    MECH["<b>Mechanism</b><br/>anything implementing hamiltonian(t) and/or unitary(t), plus jump_operators(t)<br/><i>a Model is one; so is a hand-written class (MSMagnus, ...)</i>"]
 
     subgraph EVO["<b>Evolution</b> — one class per equation of motion, all lazy"]
         direction LR
@@ -70,14 +82,14 @@ flowchart BT
     end
 
     OP -- "is the building block of" --> TERM
-    TERM -- "embedded into a subsystem and grouped in names into" --> MODEL
+    TERM -- "embedded into a subsystem and grouped by name into" --> MODEL
     MODEL -- "is one implementation of" --> MECH
     MECH -- "is integrated by" --> EVO
 ```
 
-The load-bearing idea is the **subsystem name**: two operators tagged `"spin"` act on the
-same tensor factor, so `+` lines them up and identity-pads automatically — you never write
-`⊗ I` by hand, and the joint matrix only exists when an evolution asks for `H(t)`.
+The load-bearing idea is the **subsystem name**. Two operators tagged `"spin"` act on the
+same tensor factor, so `+` lines them up and identity-pads automatically. You never write
+`⊗ I` by hand, and no joint matrix exists until an evolution asks for `H(t)`.
 
 ```python
 atom = term(0.5 * w0 * sigma_z, on="spin", name="atom")
@@ -86,20 +98,45 @@ jc   = hconj(term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc"))  # g s+ 
 H    = atom + mode + jc      # Jaynes–Cummings; names did the embedding
 ```
 
-For large Hilbert spaces (many ions / large Fock truncations), `H.sparse()` switches the
-materialization to scipy CSR — same physics, and it is what makes 10⁴–10⁵-dimensional
-ket evolutions feasible.
+## Extending it
+
+The `Mechanism` protocol is three optional methods. Implement whichever your physics
+naturally gives:
+
+```python
+class RabiDrive(ht.Mechanism):
+    def __init__(self, Omega):
+        self.Omega = Omega
+    def hamiltonian(self, t):
+        return 0.5 * self.Omega * sigma_x      # a numpy array. That's it.
+```
+
+That is enough to be evolved, compared, Trotterized, and plotted by everything else. A
+mechanism whose physics is a *gate* implements `unitary(t)` instead and skips the ODE
+entirely; one with dissipation adds `jump_operators(t)`. Two optional hints — `breakpoints()`
+and `piecewise_constant` — tell the solver where `H(t)` jumps and whether it is constant
+between jumps.
+
+Everything in `submodules/` is written against this same protocol, with no privileged
+access. `molmer_sorensen` is the largest example if you want a template.
+
+## Guards
+
+The solver refuses several things instead of silently returning a plausible wrong answer:
+a non-Hermitian `H`, an invalid `rho0`, a dissipative mechanism handed to a closed-system
+solver, integration across a declared discontinuity, extrapolation past solved data, and a
+mechanism mutated after binding. Population reaching the top of a truncated ladder raises a
+`TruncationWarning`. See [GUIDE.md](GUIDE.md#checking-a-run).
 
 ## Where to go
 
 | You want | Go to |
 |---|---|
 | To run your first simulation, step by step | [GUIDE.md](GUIDE.md) |
-| The physics and numerics under the hood (the transparent-package document) | [PHYSICS.md](PHYSICS.md) |
-| Worked examples, in order of increasing complexity | [demos/](demos/) |
-| To check whether a run was trustworthy | `ev.report()`, `converged()` — [GUIDE.md](GUIDE.md) |
-| To use QuTiP for part of the job | `htdse.interop.qutip` — [GUIDE.md](GUIDE.md) |
-| What a function does exactly | its docstring — they are written as the reference manual |
+| The physics and numerics under the hood | [PHYSICS.md](PHYSICS.md) |
+| Worked examples, increasing complexity | [demos/](demos/) |
+| To use QuTiP for part of the job | `htdse.interop.qutip` — [GUIDE.md](GUIDE.md#talking-to-qutip) |
+| What a function does exactly | its docstring — written as the reference manual |
 
 **Package layout**
 
@@ -108,9 +145,9 @@ src/htdse/
   core/            # Mechanism, terms (composable Models), the four evolution
                    # classes, embed/partial_trace, compare_over, converged,
                    # truncation guard, plotting
-  interop/         # optional bridges (qutip) -- imported lazily, never a dependency
-  submodules/      # reusable physics: spin (Paulis, pauli_sum), harmonic_oscillator,
-                   # trotter, molmer_sorensen (MS gate suite), wigner
+  interop/         # optional bridges (qutip), imported lazily, never a dependency
+  submodules/      # reusable physics: spin, harmonic_oscillator, trotter,
+                   # molmer_sorensen (MS gate suite), wigner
   magnus.py        # magnus / magnus_pauli: what a pulse effectively generates
   util.py          # otimes, ket, fidelity, sampled_pulse, ...
 demos/             # worked notebooks (start at 00)
