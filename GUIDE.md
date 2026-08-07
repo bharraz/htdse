@@ -78,7 +78,7 @@ a later time *extends* the existing solve rather than restarting it.
 ```python
 from htdse.util import otimes
 
-psi0 = ht.Operator(otimes(ht.ket("00"), fock(0, n_max)))   # |00> x |vac>
+psi0 = otimes(ht.ket("00"), fock(0, n_max))   # |00> x |vac> -- a plain numpy array
 with ht.quiet():
     ev = ht.HamiltonianEvolution(H_real, psi0)
     psi_T = ev.state_at(T)
@@ -213,7 +213,7 @@ class RabiDrive(ht.Mechanism):
     def __init__(self, Omega):
         self.Omega = Omega
     def hamiltonian(self, t):
-        return ht.Operator(0.5 * self.Omega * sigma_x)
+        return 0.5 * self.Omega * sigma_x        # just a numpy array
 ```
 
 Mechanisms are frozen once handed to an evolution — mutating parameters afterwards
@@ -223,6 +223,60 @@ raises (build a new one instead).
 passes through to `scipy.solve_ivp`; `verbose=False` per evolution or `ht.quiet()`
 globally; `check_mutation=False` to skip the stale-physics guard in an optimizer's inner
 loop (and only there).
+
+## Was the run trustworthy?
+
+Three tools, in the order you reach for them.
+
+**`ev.report()`** — everything about a solve in one place: the range actually solved, how it
+was propagated (adaptive ODE vs. exact piecewise-constant), rhs evaluations, whether the
+stale-physics guard was active or silently unavailable, the population sitting at the top of
+each truncated ladder, the unitarity defect, the trace. It reads state already tracked, so it
+costs nothing and never triggers a fresh solve.
+
+```python
+print(ev.report())
+#   solved_range    [0, 57.1199]
+#   propagation     RK45, rtol=1e-08, atol=1e-10
+#   mutation_guard  active
+#   truncation      mode=0.101        <- 10% at the ceiling: this run is compromised
+```
+
+**`converged(fn, values, tol=...)`** — the answer to the question a truncation warning
+raises. Sweeps a setting (`n_max`, `rtol`, Trotter steps), stops at the first value where
+the answer stops moving, and prints the trend. Whatever `fn` returns must be comparable
+across the sweep: states at different `n_max` live in different-dimensional spaces, so
+return a scalar observable or a fidelity against a fixed target — the default metric raises
+rather than compare the wrong thing.
+
+```python
+print(ht.converged(gate_error, [4, 6, 8, 10, 12], tol=1e-8, parameter="n_max"))
+```
+
+**`magnus_pauli(H, T)`** — when a fidelity says *something* is wrong and you need to know
+*what*. Returns the effective generator per Magnus order, decomposed over Pauli strings, so
+an unintended `YZ` coupling manufactured by non-commuting drive terms shows up named and
+sized instead of buried in one number. See `06_what_is_my_pulse_generating.ipynb`.
+
+## Talking to QuTiP
+
+`htdse.interop.qutip` is a lazy bridge — qutip is not a dependency, and nothing imports it
+until you call this.
+
+```python
+from htdse.interop.qutip import to_qutip, to_qobj, as_mechanism
+
+H_q, c_ops = to_qutip(model)        # -> qutip's native [H0, [H1, f1]] form (its FAST path)
+qutip.mcsolve(H_q, to_qobj(psi0, model.subsystems), ts, c_ops)
+```
+
+Compose here (named groups, `replace()`, the guards), solve there for the things htdse
+deliberately does not implement: `mcsolve`, `steadystate`, `floquet`. The reverse works too —
+`as_mechanism(qobj)` wraps a QuTiP object so htdse's evolutions and guards can consume it,
+and qutip's measures (`concurrence`, `entropy_vn`, ...) take htdse output through `to_qobj`.
+
+One thing to get right: htdse's registry is *ordered*, qutip's `dims` is *positional*, and
+they must agree. `to_qobj` checks the dimensions multiply out; it cannot check the order.
 
 ## The demo ladder
 
@@ -236,3 +290,4 @@ In order of increasing complexity, each notebook stating which section it exerci
 | `03_motional_dephasing.ipynb` | recipes: dissipation, `LindbladEvolution` |
 | `04_single_qubit_gate_error.ipynb` | recipes: a hand-written `Mechanism` |
 | `05_ms_two_qubit_gate.ipynb` | the whole stack, all five steps |
+| `06_what_is_my_pulse_generating.ipynb` | `magnus_pauli`: naming the error, not just sizing it |

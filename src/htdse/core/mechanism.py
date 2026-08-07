@@ -2,7 +2,6 @@ from typing import List, Optional, Sequence
 
 import numpy as np
 
-from .operator import Operator
 
 
 def _summarize(v) -> str:
@@ -47,18 +46,18 @@ class Mechanism:
 
     piecewise_constant = False  # set True if H(t) is constant between breakpoints
 
-    def hamiltonian(self, t: float) -> Operator:
+    def hamiltonian(self, t: float) -> np.ndarray:
         raise NotImplementedError(f"{type(self).__name__} has no .hamiltonian(t)")
 
-    def H(self, t: float) -> Operator:
+    def H(self, t: float) -> np.ndarray:
         """Alias for `hamiltonian(t)` -- H(t), the way it is written on paper.
         Dispatches to whatever `hamiltonian` the mechanism implements."""
         return self.hamiltonian(t)
 
-    def unitary(self, t: Optional[float] = None) -> Operator:
+    def unitary(self, t: Optional[float] = None) -> np.ndarray:
         raise NotImplementedError(f"{type(self).__name__} has no .unitary(t)")
 
-    def jump_operators(self, t: float) -> List[Operator]:
+    def jump_operators(self, t: float) -> List[np.ndarray]:
         """Lindblad jump operators L_k(t), each already scaled by sqrt(rate).
         Default: none (closed system). Only override for dissipation into a
         bath too large/uncharacterized to model as a subsystem -- a finite

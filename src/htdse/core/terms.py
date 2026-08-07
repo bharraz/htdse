@@ -50,7 +50,6 @@ import numpy as np
 from scipy import sparse as _sp
 
 from .mechanism import Mechanism
-from .operator import Operator
 from .subsystems import embed
 
 _anon_counter = itertools.count()  # unique keys for unnamed term groups
@@ -192,7 +191,7 @@ class Model(Mechanism):
 
         Same physics, different storage: every embedded term matrix and the
         static sum become CSR, `hamiltonian(t)` / `jump_operators(t)` return
-        sparse matrices (NOT dense `Operator`s), and the evolution classes use
+        sparse matrices (NOT dense ndarrays), and the evolution classes use
         sparse matrix-vector products (and `expm_multiply` on the exact
         piecewise-constant path). Worth it once the joint dimension reaches a
         few thousand; below that, dense is as fast or faster.
@@ -372,7 +371,7 @@ class Model(Mechanism):
         # (Stacking the dynamic terms into one (K,d,d) contraction was measured
         # SLOWER than this loop at realistic sizes -- the cost is in evaluating
         # the K coefficient callables, not in the matrix algebra.)
-        # Sparse models return a scipy CSR matrix, NOT a dense Operator -- at
+        # Sparse models return a scipy CSR matrix, NOT a dense ndarray -- at
         # the dimensions where sparse is worth toggling on, densifying here
         # would defeat the point (and can exceed memory outright). Call
         # `.toarray()` yourself if you really want the dense matrix.
@@ -384,17 +383,17 @@ class Model(Mechanism):
             return H
         for coeff, mat in dynamic:
             H += coeff(t) * mat  # in-place into the copy of `static`
-        return Operator(H)
+        return np.asarray(H)
 
     def jump_operators(self, t) -> list:
-        """Jump operators at time t: dense `Operator`s, or CSR matrices when
+        """Jump operators at time t: dense ndarrays, or CSR matrices when
         this Model is flagged sparse (same convention as `hamiltonian`)."""
         _, _, jump_static, jump_dynamic = self._materialize()
         if self.is_sparse:
             return ([L.copy() for L in jump_static]
                     + [coeff(t) * mat for coeff, mat in jump_dynamic])
-        return ([Operator(L) for L in jump_static]
-                + [Operator(coeff(t) * mat) for coeff, mat in jump_dynamic])
+        return ([np.asarray(L) for L in jump_static]
+                + [np.asarray(coeff(t) * mat) for coeff, mat in jump_dynamic])
 
     # ---- inspection ------------------------------------------------------
 

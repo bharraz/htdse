@@ -92,7 +92,6 @@ import numpy as np
 from scipy.linalg import expm
 
 from ..core.mechanism import Mechanism
-from ..core.operator import Operator
 from ..core.subsystems import embed
 from ..core.terms import Model, hconj, term
 from .harmonic_oscillator import annihilation
@@ -466,7 +465,7 @@ class MSMagnus(Mechanism):
 
     # -- the gate -------------------------------------------------------------
 
-    def unitary(self, t=None) -> Operator:
+    def unitary(self, t=None) -> np.ndarray:
         """U(t) = exp(Omega1 + Omega2): spin-dependent displacement (summed over
         modes) times the geometric-phase gate. Different modes' displacements and
         all the spin operators commute, so one expm of the sum is exact."""
@@ -488,7 +487,7 @@ class MSMagnus(Mechanism):
         for j in range(self.n_ions):
             for k in range(self.n_ions):
                 G = G + 1j * Theta[j, k] * (self._S[j] @ self._S[k])
-        return Operator(expm(D + G))
+        return np.asarray(expm(D + G))
 
     @property
     def dim(self):

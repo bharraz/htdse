@@ -53,7 +53,7 @@ ingredients of the ones above:
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 60, "nodeSpacing": 50}}}%%
 flowchart BT
-    OP["<b>Operator</b><br/>a matrix or vector — a Hamiltonian, a ket, a density matrix, a propagator — this extends numpy ndarray"]
+    OP["<b>numpy array</b><br/>a matrix or vector — a Hamiltonian, a ket, a density matrix, a propagator.<br/>Not wrapped in a type of our own: what you get back IS an ndarray (or a scipy<br/>CSR matrix for sparse Models), so every numpy/scipy tool works on it directly"]
 
     TERM["<b>Term</b><br/>A coefficient (a number, or f(t)) times local operators,<br/>each operator tagged with the subsystem it acts on<br/><i>e.g. term(0.5 * sigma_z, on='spin')</i>"]
 
@@ -97,17 +97,22 @@ ket evolutions feasible.
 | To run your first simulation, step by step | [GUIDE.md](GUIDE.md) |
 | The physics and numerics under the hood (the transparent-package document) | [PHYSICS.md](PHYSICS.md) |
 | Worked examples, in order of increasing complexity | [demos/](demos/) |
+| To check whether a run was trustworthy | `ev.report()`, `converged()` — [GUIDE.md](GUIDE.md) |
+| To use QuTiP for part of the job | `htdse.interop.qutip` — [GUIDE.md](GUIDE.md) |
 | What a function does exactly | its docstring — they are written as the reference manual |
 
 **Package layout**
 
 ```
 src/htdse/
-  core/            # Operator, Mechanism, terms (composable Models), the four
-                   # evolution classes, embed/partial_trace, compare_over, plotting
+  core/            # Mechanism, terms (composable Models), the four evolution
+                   # classes, embed/partial_trace, compare_over, converged,
+                   # truncation guard, plotting
+  interop/         # optional bridges (qutip) -- imported lazily, never a dependency
   submodules/      # reusable physics: spin (Paulis, pauli_sum), harmonic_oscillator,
                    # trotter, molmer_sorensen (MS gate suite), wigner
-  util.py          # otimes, ket, fidelity, projector, ...
+  magnus.py        # magnus / magnus_pauli: what a pulse effectively generates
+  util.py          # otimes, ket, fidelity, sampled_pulse, ...
 demos/             # worked notebooks (start at 00)
 tests/             # python tests/test_htdse.py ; python tests/test_molmer_sorensen.py
 ```

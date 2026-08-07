@@ -9,7 +9,6 @@ from scipy.sparse.linalg import expm_multiply
 
 from . import config
 from .mechanism import provides_hamiltonian, provides_unitary
-from .operator import Operator
 from .truncation import resolve_threshold, warn_if_truncated
 from ..util import MAG_THRESHOLD
 
@@ -176,11 +175,11 @@ class _ExtendableSolver:
     the frozen-after-binding rule yourself.
     """
 
-    def __init__(self, rhs, initial: Operator, t0: float = 0.0,
+    def __init__(self, rhs, initial, t0: float = 0.0,
                  rtol=1e-8, atol=1e-10, method="RK45", verbose=None,
                  mechanism=None, label=None, expm_ok=False, check_mutation=True):
         self.rhs = rhs
-        self.initial = initial if isinstance(initial, Operator) else Operator(initial)
+        self.initial = np.asarray(initial)
         self.t0 = t0
         self.rtol = rtol
         self.atol = atol
@@ -191,6 +190,8 @@ class _ExtendableSolver:
         self._expm = bool(expm_ok and getattr(mechanism, "piecewise_constant", False))
         bps = getattr(mechanism, "breakpoints", None)
         self._breakpoints = np.sort(np.asarray(bps(), dtype=float)) if callable(bps) else np.array([])
+        self._nfev = 0       # accumulated rhs evaluations, for report()
+        self._nsteps = 0     # accumulated accepted steps, for report()
         self._segments = []  # sorted, contiguous (t_lo, t_hi, y_of_t callable) around t0
         self._seg_los = None  # ascending t_lo array, rebuilt lazily for lookup
         self._lo_t, self._hi_t = t0, t0
@@ -247,6 +248,8 @@ class _ExtendableSolver:
                   f"steps={len(sol.t)}, rhs evals={sol.nfev}")
         if not sol.success:
             raise RuntimeError(f"integration failed on [{t_start}, {t_end}]: {sol.message}")
+        self._nfev += int(sol.nfev)
+        self._nsteps += len(sol.t)
         return sol.sol
 
     def _solve_range(self, t_start, t_end, y_start):
@@ -289,7 +292,7 @@ class _ExtendableSolver:
                 return fn(t)  # within-solved-range evaluation only
         raise RuntimeError(f"t={t} not covered after extension (internal error)")
 
-    def state_at(self, t) -> Operator:
+    def state_at(self, t) -> np.ndarray:
         """Evolved state at time(s) t (scalar or array-like). Extends the
         solved range as needed; never extrapolates."""
         # Checked on EVERY query, not just on extension: a mutated mechanism is
@@ -302,17 +305,15 @@ class _ExtendableSolver:
         for i, tt in enumerate(t_arr):
             out[i] = self._value_at(tt).reshape(self.initial.shape)
         if np.ndim(t) == 0:
-            return Operator(out[0])
-        return Operator(out)
+            return np.asarray(out[0])
+        return np.asarray(out)
 
 
 def _schrodinger_rhs(mechanism, shape):
     """dX/dt = -i H(t) X, for X a ket (d,) or an operator (d,d)."""
     def rhs(t, y_flat):
-        # plain ndarray: every Operator result would copy a params dict, and this
-        # runs once per integrator function evaluation. A sparse H is kept
-        # sparse -- csr @ dense returns a dense ndarray, which is all the ODE
-        # solver ever sees.
+        # A sparse H is kept sparse -- csr @ dense returns a dense ndarray,
+        # which is all the ODE solver ever sees.
         H = mechanism.hamiltonian(t)
         if not _sp.issparse(H):
             H = np.asarray(H)
@@ -329,11 +330,104 @@ def _default_subsystems(mechanism, subsystems):
     return dict(getattr(mechanism, "subsystems", {}) or {})
 
 
+class Report(dict):
+    """What a solve actually did, as a dict that prints like a lab note.
+
+    `ev.report()["truncation"]` for the numbers, `print(ev.report())` for a
+    human. See `_Reportable.report`."""
+
+    _ORDER = ("mechanism", "equation", "solved_range", "segments", "propagation",
+              "rhs_evals", "steps", "breakpoints", "mutation_guard",
+              "truncation", "unitarity_defect", "trace")
+
+    def __str__(self):
+        width = max(len(k) for k in self) if self else 0
+        lines = [f"{self.get('equation', 'evolution')} report"]
+        for k in self._ORDER:
+            if k not in self or k == "equation":
+                continue
+            v = self[k]
+            if isinstance(v, float):
+                v = f"{v:.6g}"
+            elif isinstance(v, dict):
+                v = ", ".join(f"{n}={p:.3g}" for n, p in v.items()) or "(none checked)"
+            lines.append(f"  {k:<{width}}  {v}")
+        return "\n".join(lines)
+
+    __repr__ = __str__
+
+
+class _Reportable:
+    """`report()` for the evolution classes -- one honest summary of a solve.
+
+    Everything here is already computed or tracked somewhere; the point is that
+    "was this run trustworthy?" should be one call rather than a scavenger hunt
+    across warnings, `unitarity_defect`, and the verbose log."""
+
+    _report_kind = "ket"      # overridden per class; drives the truncation check
+
+    def report(self, t=None) -> Report:
+        """Diagnostics for this evolution, as of the times solved so far.
+
+        t: where to evaluate the state-dependent checks (truncation, unitarity,
+        trace). Defaults to the far edge of what has been solved, so calling
+        `report()` costs nothing extra and never triggers a fresh solve. Passing
+        a t outside the solved range WILL extend the solve, exactly like
+        `state_at` would.
+
+        Reads, it does not judge: a large `unitarity_defect` or a nonzero
+        `truncation` entry means the numbers upstream are suspect, and this
+        tells you so without deciding what to do about it.
+        """
+        solver = getattr(self, "_solver", None)
+        rep = Report(mechanism=repr(getattr(self, "mechanism", None)),
+                     equation=type(self).__name__)
+
+        if solver is None:      # analytic-unitary path: no ODE ever runs
+            rep["propagation"] = "analytic .unitary(t), no solve"
+            rep["solved_range"] = "n/a"
+        else:
+            solved = (solver._lo_t, solver._hi_t)
+            rep["solved_range"] = ("nothing solved yet" if solved[0] == solved[1]
+                                   else f"[{solved[0]:.6g}, {solved[1]:.6g}]")
+            rep["segments"] = len(solver._segments)
+            rep["propagation"] = (
+                "exact per interval (piecewise-constant H)" if solver._expm
+                else f"{solver.method}, rtol={solver.rtol:g}, atol={solver.atol:g}")
+            rep["rhs_evals"] = solver._nfev
+            rep["steps"] = solver._nsteps
+            rep["breakpoints"] = len(solver._breakpoints)
+            rep["mutation_guard"] = (
+                "disabled (check_mutation=False)" if not solver._check_mutation
+                else "active" if solver._mech_state is not None
+                else "UNAVAILABLE -- mechanism has unpicklable parameters "
+                     "(e.g. lambda coefficients); do not mutate it")
+            if t is None and solved[0] != solved[1]:
+                t = solver._hi_t
+
+        if t is None:
+            return rep
+
+        state = self.state_at(t)
+        rep["at_t"] = float(t)
+        subs = getattr(self, "subsystems", {}) or {}
+        if subs:
+            from .truncation import truncation_populations
+            rep["truncation"] = truncation_populations(
+                state, subs, self._report_kind,
+                getattr(self, "_ladders", None))
+        if hasattr(self, "unitarity_defect"):
+            rep["unitarity_defect"] = self.unitarity_defect(t)
+        if self._report_kind == "density":
+            rep["trace"] = float(np.real(np.trace(np.asarray(state))))
+        return rep
+
+
 # ---------------------------------------------------------------------------
 # the four evolution classes -- one per equation of motion
 # ---------------------------------------------------------------------------
 
-class HamiltonianEvolution:
+class HamiltonianEvolution(_Reportable):
     """State-vector evolution: i d|psi(t)>/dt = H(t)|psi(t)>, |psi(t0)> = initial.
 
     `subsystems`: ordered {name: dim} of this state's tensor factors, needed
@@ -344,10 +438,10 @@ class HamiltonianEvolution:
     Every time-parametrized method accepts a scalar t or an array of times.
     """
 
-    def __init__(self, mechanism, initial: Operator, t0: float = 0.0,
+    def __init__(self, mechanism, initial, t0: float = 0.0,
                  subsystems: dict | None = None, truncation=None,
                  ladders=None, **solver_kwargs):
-        initial = initial if isinstance(initial, Operator) else Operator(initial)
+        initial = np.asarray(initial)
         _reject_dissipative(mechanism, t0, "HamiltonianEvolution")
         _check_hermitian(mechanism.hamiltonian(t0))
         self.mechanism = mechanism
@@ -359,7 +453,7 @@ class HamiltonianEvolution:
         self._truncation, self._ladders = truncation, ladders
         self._trunc_seen = set()
 
-    def state_at(self, t) -> Operator:
+    def state_at(self, t) -> np.ndarray:
         state = self._solver.state_at(t)
         # a matrix initial is a propagator / stack of kets, not a ket trajectory
         kind = "ket" if self._solver.initial.ndim == 1 else "unitary"
@@ -381,14 +475,14 @@ class HamiltonianEvolution:
                 f"{self._solver.initial.shape} (a propagator or a stack of kets). "
                 "Evolve a single ket, or use DensityMatrixEvolution / UnitaryEvolution.")
 
-    def trace_out(self, *names, t) -> Operator:
+    def trace_out(self, *names, t) -> np.ndarray:
         """Reduced density matrix at time(s) t, tracing out the named
         subsystems. Scalar t -> (d, d); array t -> (n_times, d, d)."""
         from .subsystems import partial_trace
         self._require_ket("trace_out")
         psi = self.state_at(t)                                   # (d,) or (n, d)
         rho = psi[..., :, None] * psi.conj()[..., None, :]        # batched |psi><psi|
-        return partial_trace(Operator(rho), self.subsystems, names)
+        return partial_trace(np.asarray(rho), self.subsystems, names)
 
     def instantaneous_eigenbasis(self, t):
         """Eigenbasis of H(t) itself (not the evolved state): H(t)|n(t)> = E_n(t)|n(t)>.
@@ -429,7 +523,7 @@ class HamiltonianEvolution:
         return float(pops[0]) if np.ndim(t) == 0 else pops[:, 0]
 
 
-class UnitaryEvolution:
+class UnitaryEvolution(_Reportable):
     """Propagator evolution: i d/dt U(t) = H(t) U(t), U(t0) = initial (usually I).
 
     Pass either `initial` (an existing propagator to continue) or `dim`
@@ -442,7 +536,9 @@ class UnitaryEvolution:
     business, not something to guess here.
     """
 
-    def __init__(self, mechanism, initial: Operator | None = None, dim: int | None = None,
+    _report_kind = "unitary"
+
+    def __init__(self, mechanism, initial=None, dim: int | None = None,
                  t0: float = 0.0, subsystems: dict | None = None,
                  truncation=None, ladders=None, **solver_kwargs):
         _reject_dissipative(mechanism, t0, "UnitaryEvolution")
@@ -469,25 +565,25 @@ class UnitaryEvolution:
         if initial is None:
             if dim is None:
                 raise ValueError("UnitaryEvolution needs either initial or dim")
-            initial = Operator(np.eye(dim, dtype=complex))  # U(t0) = I
+            initial = np.eye(dim, dtype=complex)  # U(t0) = I
         elif dim is not None and np.shape(initial)[0] != dim:
             raise ValueError(f"UnitaryEvolution got both `initial` (dimension "
                              f"{np.shape(initial)[0]}) and dim={dim}, which disagree; "
                              f"`initial` wins, so drop `dim` or make them match")
-        initial = initial if isinstance(initial, Operator) else Operator(initial)
+        initial = np.asarray(initial)
         _check_hermitian(mechanism.hamiltonian(t0))
         rhs = _schrodinger_rhs(mechanism, initial.shape)
         self._solver = _ExtendableSolver(rhs, initial, t0, mechanism=mechanism,
                                          label="UnitaryEvolution", expm_ok=True,
                                          **solver_kwargs)
 
-    def unitary_at(self, t) -> Operator:
+    def unitary_at(self, t) -> np.ndarray:
         """The propagator U(t) (scalar t) or a stack of them (array t)."""
         if self._analytic:
             if np.ndim(t) == 0:
-                U = Operator(self.mechanism.unitary(t))
+                U = np.asarray(self.mechanism.unitary(t))
             else:
-                U = Operator(np.array([np.asarray(self.mechanism.unitary(tt))
+                U = np.asarray(np.array([np.asarray(self.mechanism.unitary(tt))
                                        for tt in np.asarray(t)]))
         else:
             U = self._solver.state_at(t)
@@ -507,7 +603,7 @@ class UnitaryEvolution:
         return float(np.max(np.abs(np.swapaxes(U.conj(), -1, -2) @ U - np.eye(d))))
 
 
-class DensityMatrixEvolution:
+class DensityMatrixEvolution(_Reportable):
     """Closed-system (no dissipation) density matrix evolution:
 
         rho(t) = U(t) rho0 U(t)^dagger
@@ -521,13 +617,15 @@ class DensityMatrixEvolution:
     passing a dissipative mechanism here raises.
     """
 
-    def __init__(self, mechanism, rho0: Operator, t0: float = 0.0,
+    _report_kind = "density"
+
+    def __init__(self, mechanism, rho0, t0: float = 0.0,
                  subsystems: dict | None = None, truncation=None,
                  ladders=None, **solver_kwargs):
         _reject_dissipative(mechanism, t0, "DensityMatrixEvolution")
         _check_density_matrix(rho0)
         self.mechanism = mechanism
-        self.rho0 = rho0 if isinstance(rho0, Operator) else Operator(rho0)
+        self.rho0 = np.asarray(rho0)
         dim = self.rho0.shape[0]
         # the inner propagator's own guard is off: what matters physically is
         # the ceiling population of rho, which depends on rho0, and warning
@@ -538,12 +636,12 @@ class DensityMatrixEvolution:
         self._truncation, self._ladders = truncation, ladders
         self._trunc_seen = set()
 
-    def state_at(self, t) -> Operator:
+    def state_at(self, t) -> np.ndarray:
         U = self._U.unitary_at(t)
         if U.ndim == 2:
-            rho = Operator(U @ self.rho0 @ U.conj().T)  # single time: U rho0 U^dagger
+            rho = np.asarray(U @ self.rho0 @ U.conj().T)  # single time: U rho0 U^dagger
         else:
-            rho = Operator(np.einsum("nij,jk,nlk->nil", U, self.rho0, U.conj()))  # batched over time axis n
+            rho = np.asarray(np.einsum("nij,jk,nlk->nil", U, self.rho0, U.conj()))  # batched over time axis n
         warn_if_truncated(rho, self.subsystems, "density",
                           resolve_threshold(self._truncation), self._ladders,
                           self._trunc_seen, "DensityMatrixEvolution")
@@ -552,7 +650,7 @@ class DensityMatrixEvolution:
     def unitarity_defect(self, t) -> float:
         return self._U.unitarity_defect(t)
 
-    def trace_out(self, *names, t) -> Operator:
+    def trace_out(self, *names, t) -> np.ndarray:
         """rho at time(s) t, tracing out the named subsystems (batched over t)."""
         from .subsystems import partial_trace
         rho = self.state_at(t)
@@ -580,7 +678,7 @@ def _lindblad_rhs(mechanism, dim):
     return rhs
 
 
-class LindbladEvolution:
+class LindbladEvolution(_Reportable):
     """Open-system density matrix evolution via the Lindblad master equation:
 
         d(rho)/dt = -i[H(t), rho] + sum_k ( L_k rho L_k^dagger - 1/2{L_k^dagger L_k, rho} )
@@ -596,13 +694,15 @@ class LindbladEvolution:
     matrix with negative eigenvalues, i.e. not a valid density matrix.
     """
 
-    def __init__(self, mechanism, rho0: Operator, t0: float = 0.0,
+    _report_kind = "density"
+
+    def __init__(self, mechanism, rho0, t0: float = 0.0,
                  subsystems: dict | None = None, truncation=None,
                  ladders=None, **solver_kwargs):
         _check_density_matrix(rho0)
         _check_hermitian(mechanism.hamiltonian(t0))
         self.mechanism = mechanism
-        self.rho0 = rho0 if isinstance(rho0, Operator) else Operator(rho0)
+        self.rho0 = np.asarray(rho0)
         self.t0 = t0
         dim = self.rho0.shape[0]
         rhs = _lindblad_rhs(mechanism, dim)
@@ -613,7 +713,7 @@ class LindbladEvolution:
         self._truncation, self._ladders = truncation, ladders
         self._trunc_seen = set()
 
-    def state_at(self, t) -> Operator:
+    def state_at(self, t) -> np.ndarray:
         if np.any(np.asarray(t) < self.t0):
             raise ValueError(
                 f"LindbladEvolution.state_at: requested t < t0 ({self.t0}). Backward "
@@ -629,7 +729,7 @@ class LindbladEvolution:
                           self._trunc_seen, "LindbladEvolution")
         return rho
 
-    def trace_out(self, *names, t) -> Operator:
+    def trace_out(self, *names, t) -> np.ndarray:
         """rho at time(s) t, tracing out the named subsystems (batched over t)."""
         from .subsystems import partial_trace
         rho = self.state_at(t)

@@ -7,7 +7,6 @@ Everything a physicist reaches for interactively is importable from the top:
     ev = ht.HamiltonianEvolution(H, psi0)
 """
 from .core.config import quiet, no_truncation_check
-from .core.operator import Operator
 from .core.truncation import TruncationWarning, truncation_populations
 from .core.mechanism import Mechanism
 from .core.terms import Model, term, jump, hconj
@@ -15,6 +14,7 @@ from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
                              DensityMatrixEvolution, LindbladEvolution)
 from .core.subsystems import embed, partial_trace
 from .core.compare import compare_over
+from .core.convergence import converged
 from .magnus import magnus, magnus_pauli, pauli_decompose
 from .util import (MAG_THRESHOLD, otimes, ket, projector, fidelity,
                    process_fidelity, density_fidelity, relative_phase,
@@ -22,9 +22,9 @@ from .util import (MAG_THRESHOLD, otimes, ket, projector, fidelity,
 
 __all__ = [
     "quiet", "no_truncation_check", "TruncationWarning", "truncation_populations",
-    "Operator", "Mechanism", "Model", "term", "jump", "hconj",
+    "Mechanism", "Model", "term", "jump", "hconj",
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
-    "LindbladEvolution", "embed", "partial_trace", "compare_over",
+    "LindbladEvolution", "embed", "partial_trace", "compare_over", "converged",
     "magnus", "magnus_pauli", "pauli_decompose",
     "MAG_THRESHOLD", "otimes", "ket", "projector", "fidelity",
     "process_fidelity", "density_fidelity", "relative_phase",

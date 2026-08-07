@@ -11,7 +11,6 @@ of smooth-interpolant artifacts, while remaining just another `H(t)`.
 import numpy as np
 
 from ..core.mechanism import Mechanism
-from ..core.operator import Operator
 
 
 class TrotterizedMechanism(Mechanism):
@@ -47,7 +46,7 @@ class TrotterizedMechanism(Mechanism):
             return 0.5 * (self._edges[k] + self._edges[k + 1])
         return self._edges[k]
 
-    def hamiltonian(self, t) -> Operator:
+    def hamiltonian(self, t) -> np.ndarray:
         return self.inner.hamiltonian(self._sample_time(t))
 
     def jump_operators(self, t) -> list:
