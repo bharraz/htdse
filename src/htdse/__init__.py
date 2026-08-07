@@ -16,7 +16,7 @@ from .core.subsystems import embed, partial_trace
 from .core.compare import compare_over
 from .core.convergence import converged
 from .magnus import magnus, magnus_pauli, pauli_decompose
-from .util import (MAG_THRESHOLD, otimes, ket, projector, fidelity,
+from .util import (MAG_THRESHOLD, dag, otimes, ket, projector, fidelity,
                    process_fidelity, density_fidelity, relative_phase,
                    binary_to_index, index_to_binary, sampled_pulse)
 
@@ -26,7 +26,7 @@ __all__ = [
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
     "LindbladEvolution", "embed", "partial_trace", "compare_over", "converged",
     "magnus", "magnus_pauli", "pauli_decompose",
-    "MAG_THRESHOLD", "otimes", "ket", "projector", "fidelity",
+    "MAG_THRESHOLD", "dag", "otimes", "ket", "projector", "fidelity",
     "process_fidelity", "density_fidelity", "relative_phase",
     "binary_to_index", "index_to_binary", "sampled_pulse",
 ]

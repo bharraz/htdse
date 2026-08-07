@@ -32,6 +32,18 @@ def number_operator(n_max: int) -> np.ndarray:
     return a.conj().T @ a  # a^dagger a
 
 
+def ladder_operators(n_max: int) -> tuple:
+    """(a, a^dagger, n) for a truncated mode -- the three you almost always need together.
+
+    Builds a once and derives the other two from it, instead of three separate
+    truncated-diagonal constructions.
+    """
+    a = annihilation(n_max)
+    adag = a.conj().T
+    n = adag @ a
+    return a, adag, n
+
+
 def fock(n: int, n_max: int) -> np.ndarray:
     """Fock state |n> in the truncated (n_max+1)-dim space."""
     psi = np.zeros(n_max + 1, dtype=complex)

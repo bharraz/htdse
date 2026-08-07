@@ -16,12 +16,13 @@ import htdse as ht
 from htdse import (Mechanism, Model, term, jump, plus_hc,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, embed, partial_trace, compare_over,
-                   otimes, ket, fidelity, process_fidelity, density_fidelity, quiet)
+                   otimes, ket, fidelity, process_fidelity, density_fidelity, quiet, dag)
 from htdse.core.plotting import plot_populations
 from htdse.submodules.spin import (sigma_x, sigma_y, sigma_z, I2, sigma_plus,
                                    sigma_minus, pauli_term, pauli_sum)
 from htdse.submodules.harmonic_oscillator import (annihilation, creation,
                                                   number_operator, fock,
+                                                  ladder_operators,
                                                   ThermalMotionalDecoherence)
 from htdse.submodules.trotter import TrotterizedMechanism
 
@@ -75,6 +76,18 @@ looped = np.array([partial_trace(np.asarray(r), {"A": 2, "B": 3}, ("B",)) for r 
 check("partial_trace batched == looped", np.allclose(batched, looped))
 Psi = psis[0].reshape(2, 3)
 check("partial_trace == Psi Psi^dag", np.allclose(batched[0], Psi @ Psi.conj().T))
+
+print("== util: dag ==")
+M = rng.normal(size=(4, 4)) + 1j * rng.normal(size=(4, 4))
+check("dag(M) == M.conj().T", np.array_equal(dag(M), M.conj().T))
+check("dag(dag(M)) == M", np.array_equal(dag(dag(M)), M))
+check("M + dag(M) is Hermitian", np.allclose(M + dag(M), dag(M + dag(M))))
+
+print("== harmonic_oscillator: ladder_operators ==")
+_a_lo, _adag_lo, _n_lo = ladder_operators(n_max=8)
+check("ladder_operators a == annihilation", np.array_equal(_a_lo, annihilation(8)))
+check("ladder_operators adag == creation", np.array_equal(_adag_lo, creation(8)))
+check("ladder_operators n == number_operator", np.array_equal(_n_lo, number_operator(8)))
 
 print("== term layer: composition ==")
 n_max = 12

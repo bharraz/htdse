@@ -3,6 +3,10 @@ import numpy as np
 MAG_THRESHOLD = 1e-8 # Threshold where below this number something is considered 0
 
 
+def dag(op: np.ndarray) -> np.ndarray:
+    """Hermitian conjugate, op^dagger = op.conj().T -- so it's called what it is."""
+    return op.conj().T
+
 def projector(state: np.ndarray) -> np.ndarray:
     """Return projector operator for a given state vector."""
     return np.outer(state, state.conj())  # |state><state|
