@@ -13,7 +13,7 @@ def plot_populations(ts, states, labels=None, ax=None):
       - a density-matrix trajectory, shape (n_times, dim, dim): diagonal
         Re rho_ii(t) (e.g. from trace_out or a LindbladEvolution).
 
-    Dimension/mechanism-agnostic. `labels`: optional per-basis-state labels;
+    Dimension/system-agnostic. `labels`: optional per-basis-state labels;
     default to bitstrings if dim is a power of 2 (qubit register), otherwise
     plain numeric indices (e.g. Fock states of a truncated oscillator).
     """

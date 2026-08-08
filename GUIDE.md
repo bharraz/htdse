@@ -35,7 +35,7 @@ b = np.array([1, 1]) / np.sqrt(2)        # COM-mode participation
 
 ## Step 1 — compose the target
 
-The target is whatever defines "correct". Here, the analytic Magnus result — a mechanism
+The target is whatever defines "correct". Here, the analytic Magnus result — a system
 defined as a gate (`unitary(t)`), no ODE involved:
 
 ```python
@@ -149,12 +149,12 @@ open_model = H + ht.jump(a, on="mode", coeff=np.sqrt(gamma), name="decay")
 rho_t = ht.LindbladEvolution(open_model, rho0).state_at(ts)
 ```
 
-**Trotterize anything** — wraps a mechanism into its piecewise-constant version, each step
+**Trotterize anything** — wraps a system into its piecewise-constant version, each step
 propagated exactly, so no ODE error contaminates a Trotter-error study:
 
 ```python
-from htdse.submodules.trotter import TrotterizedMechanism
-mech = TrotterizedMechanism(H_real, 0, T, n_steps=64)
+from htdse.submodules.trotter import TrotterizedSystem
+mech = TrotterizedSystem(H_real, 0, T, n_steps=64)
 ```
 
 **Swap or drop physics** — groups are the handles:
@@ -175,7 +175,7 @@ ev = ht.HamiltonianEvolution(H_big.sparse(), psi0)
 Kets scale; density matrices and propagators are d×d regardless, so for the biggest spaces
 stay with `HamiltonianEvolution`.
 
-**Your own mechanism** — see [README](README.md#extending-it). Mechanisms are frozen once
+**Your own system** — see [README](README.md#extending-it). Systems are frozen once
 handed to an evolution; mutating parameters afterwards raises.
 
 **Solver control** — `rtol=`, `atol=`, `method=` pass through to `scipy.solve_ivp`;
@@ -255,6 +255,6 @@ htdse's registry is *ordered*, qutip's `dims` is *positional*, and they must agr
 | `01_jaynes_cummings_composition.ipynb` | Step 1: the term layer, `replace()` |
 | `02_two_qubit_crosstalk.ipynb` | Step 4: `embed` / `trace_out` |
 | `03_motional_dephasing.ipynb` | dissipation, `LindbladEvolution` |
-| `04_single_qubit_gate_error.ipynb` | a hand-written `Mechanism` |
+| `04_single_qubit_gate_error.ipynb` | a hand-written `System` |
 | `05_ms_two_qubit_gate.ipynb` | the whole stack |
 | `06_what_is_my_pulse_generating.ipynb` | `magnus_pauli` |

@@ -19,7 +19,7 @@ rather than returning a truncation you might mistake for exact.
     >>> terms = magnus_pauli(H, T, order=2)
     >>> terms[1]["ZZ"]        # the ZZ coupling generated at second order
 
-Both functions accept a Mechanism (anything with `.hamiltonian(t)`) or a plain
+Both functions accept a System (anything with `.hamiltonian(t)`) or a plain
 callable t -> matrix.
 """
 import itertools
@@ -32,7 +32,7 @@ _PAULI_1Q = {"I": I2, "X": sigma_x, "Y": sigma_y, "Z": sigma_z}
 
 
 def _H_of(H):
-    """Accept a Mechanism or a bare callable t -> matrix."""
+    """Accept a System or a bare callable t -> matrix."""
     fn = getattr(H, "hamiltonian", None)
     return fn if callable(fn) else H
 
@@ -104,7 +104,7 @@ def magnus_pauli(H, T, order=2, t0=0.0, n_grid=2001, tol=1e-9) -> list:
     anti-Hermitian (Omega = -i H_eff), so the coefficients here are those of
     Omega itself -- multiply by 1j to read them as an effective Hamiltonian.
 
-    Only works on a pure qubit register (dim 2^n): a mechanism carrying a
+    Only works on a pure qubit register (dim 2^n): a system carrying a
     motional mode has to be traced/projected down to the spins first.
     """
     return [pauli_decompose(Om, tol=tol)

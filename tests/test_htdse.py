@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import htdse as ht
-from htdse import (Mechanism, Model, term, jump, plus_hc,
+from htdse import (System, Model, term, jump, plus_hc,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, embed, partial_trace, compare_over,
                    otimes, ket, fidelity, process_fidelity, density_fidelity, quiet, dag)
@@ -24,7 +24,7 @@ from htdse.submodules.harmonic_oscillator import (annihilation, creation,
                                                   number_operator, fock,
                                                   ladder_operators,
                                                   ThermalMotionalDecoherence)
-from htdse.submodules.trotter import TrotterizedMechanism
+from htdse.submodules.trotter import TrotterizedSystem
 
 rng = np.random.default_rng(7)
 PASS = []
@@ -41,7 +41,7 @@ def rand_herm(d):
     return (M + M.conj().T) / 2
 
 
-class RabiDrive(Mechanism):
+class RabiDrive(System):
     def __init__(self, Omega, eps=0.0, delta=0.0):
         self.Omega, self.eps, self.delta = Omega, eps, delta
 
@@ -199,7 +199,7 @@ except ValueError:
     check("dissipative mech rejected by closed-system class", True)
 
 
-class BadMech(Mechanism):
+class BadMech(System):
     def hamiltonian(self, t):
         return np.array([[0, 1], [0, 0]], dtype=complex)  # not Hermitian
 
@@ -230,7 +230,7 @@ except Exception:
 print("== Trotter: breakpoints + exact expm path ==")
 
 
-class Ramp(Mechanism):
+class Ramp(System):
     """H(t) = (1 - t/T) X + (t/T) Z -- smooth ramp to Trotterize."""
     def __init__(self, T):
         self.T = T
@@ -243,9 +243,9 @@ class Ramp(Mechanism):
 T = 4.0
 with quiet():
     exact = HamiltonianEvolution(Ramp(T), ket("0")).state_at(T)
-    trot200 = HamiltonianEvolution(TrotterizedMechanism(Ramp(T), 0, T, 200),
+    trot200 = HamiltonianEvolution(TrotterizedSystem(Ramp(T), 0, T, 200),
                                    ket("0")).state_at(T)
-    trot20 = HamiltonianEvolution(TrotterizedMechanism(Ramp(T), 0, T, 20),
+    trot20 = HamiltonianEvolution(TrotterizedSystem(Ramp(T), 0, T, 20),
                                   ket("0")).state_at(T)
 err200 = 1 - fidelity(exact, trot200)
 err20 = 1 - fidelity(exact, trot20)
@@ -254,7 +254,7 @@ check("Trotter error shrinks with steps", err200 < err20 / 10)
 
 # one-step trotter must EXACTLY equal the eigh propagator (expm path, no ODE)
 with quiet():
-    one = HamiltonianEvolution(TrotterizedMechanism(Ramp(T), 0, T, 1),
+    one = HamiltonianEvolution(TrotterizedSystem(Ramp(T), 0, T, 1),
                                ket("0")).state_at(T)
 Hmid = np.asarray(Ramp(T).hamiltonian(T / 2))
 E, V = np.linalg.eigh(Hmid)
@@ -263,14 +263,14 @@ check("piecewise-constant path is exact expm", np.allclose(np.asarray(one), expe
 
 # unitarity of the expm path over many steps
 with quiet():
-    Uev = UnitaryEvolution(TrotterizedMechanism(Ramp(T), 0, T, 50), dim=2)
+    Uev = UnitaryEvolution(TrotterizedSystem(Ramp(T), 0, T, 50), dim=2)
     _ = Uev.unitary_at(T)
 check("expm path unitarity defect tiny", Uev.unitarity_defect(T) < 1e-12)
 
-print("== analytic-unitary mechanism (dual primitive wired) ==")
+print("== analytic-unitary system (dual primitive wired) ==")
 
 
-class AnalyticGate(Mechanism):
+class AnalyticGate(System):
     """Defined as a gate only: U(t) = exp(-i (Omega/2) X t) (e.g. an RWA result)."""
     def __init__(self, Omega):
         self.Omega = Omega
@@ -462,14 +462,14 @@ check("sparse UnitaryEvolution == dense", np.allclose(np.asarray(U_s), np.asarra
 ramp_model = (term(sigma_x, on="q", coeff=lambda t: 1 - np.clip(t / T, 0, 1), name="x")
               + term(sigma_z, on="q", coeff=lambda t: np.clip(t / T, 0, 1), name="z"))
 with quiet():
-    trot_d = HamiltonianEvolution(TrotterizedMechanism(ramp_model, 0, T, 40),
+    trot_d = HamiltonianEvolution(TrotterizedSystem(ramp_model, 0, T, 40),
                                   ket("0")).state_at(T)
-    trot_s = HamiltonianEvolution(TrotterizedMechanism(ramp_model.sparse(), 0, T, 40),
+    trot_s = HamiltonianEvolution(TrotterizedSystem(ramp_model.sparse(), 0, T, 40),
                                   ket("0")).state_at(T)
 check("sparse expm_multiply path == dense eigh path",
       np.allclose(np.asarray(trot_s), np.asarray(trot_d), atol=1e-10))
 with quiet():
-    Uev_s = UnitaryEvolution(TrotterizedMechanism(ramp_model.sparse(), 0, T, 40), dim=2)
+    Uev_s = UnitaryEvolution(TrotterizedSystem(ramp_model.sparse(), 0, T, 40), dim=2)
     _ = Uev_s.unitary_at(T)
 check("sparse expm path unitarity defect tiny", Uev_s.unitarity_defect(T) < 1e-10)
 
@@ -584,13 +584,13 @@ check("report on an unsolved evolution solves nothing",
       and "truncation" not in _r0)
 # the exact piecewise-constant path is reported as exact, not as an ODE
 with quiet():
-    _tev = UnitaryEvolution(TrotterizedMechanism(Ramp(4.0), 0, 4.0, 20), dim=2)
+    _tev = UnitaryEvolution(TrotterizedSystem(Ramp(4.0), 0, 4.0, 20), dim=2)
     _tev.unitary_at(4.0)
 _rt = _tev.report()
 check("report distinguishes exact propagation from an ODE solve",
       "exact" in _rt["propagation"] and _rt["breakpoints"] == 21
       and _rt["unitarity_defect"] < 1e-12)
-# analytic-unitary mechanisms have no solver at all
+# analytic-unitary systems have no solver at all
 check("report handles the analytic-unitary path",
       UnitaryEvolution(AnalyticGate(1.0)).report()["propagation"].startswith("analytic"))
 # guard status is reported, not silently assumed
@@ -679,13 +679,13 @@ else:
     check("as_mechanism(QobjEvo) evolves in htdse",
           np.max(np.abs(np.abs(_pe @ _psi0.conj()) ** 2 - _ref)) < 1e-9)
 
-    # and htdse's own guards still apply to a qutip-sourced mechanism
+    # and htdse's own guards still apply to a qutip-sourced system
     _Lq = _qt.Qobj(np.sqrt(0.3) * np.kron(I2, _a), dims=[[2, _n + 1]] * 2)
     _md = as_mechanism(_Hq0, subsystems=_H.subsystems, jumps=[_Lq])
     try:
         HamiltonianEvolution(_md, _psi0)
-        check("closed solver still refuses a dissipative qutip mechanism", False)
+        check("closed solver still refuses a dissipative qutip system", False)
     except ValueError:
-        check("closed solver still refuses a dissipative qutip mechanism", True)
+        check("closed solver still refuses a dissipative qutip system", True)
 
 print(f"\nALL {len(PASS)} CHECKS PASSED")

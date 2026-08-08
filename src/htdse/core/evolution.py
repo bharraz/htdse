@@ -8,7 +8,7 @@ from scipy.integrate import solve_ivp
 from scipy.sparse.linalg import expm_multiply
 
 from . import config
-from .mechanism import provides_hamiltonian, provides_unitary
+from .system import provides_hamiltonian, provides_unitary
 from .truncation import resolve_threshold, warn_if_truncated
 from ..util import MAG_THRESHOLD
 
@@ -18,7 +18,7 @@ from ..util import MAG_THRESHOLD
 # ---------------------------------------------------------------------------
 
 def _dense(H) -> np.ndarray:
-    """Densify a possibly-sparse operator (sparse mechanisms hand out CSR)."""
+    """Densify a possibly-sparse operator (sparse systems hand out CSR)."""
     return H.toarray() if _sp.issparse(H) else np.asarray(H)
 
 
@@ -33,14 +33,14 @@ def _check_hermitian(H, what="H(t0)"):
         defect = abs(diff).max() if diff.nnz else 0.0
         if defect > MAG_THRESHOLD * scale:
             raise ValueError(f"{what} is not Hermitian (max |H - H^dag| = {defect:.3g}). "
-                             "Check the mechanism for a sign/conjugation error.")
+                             "Check the system for a sign/conjugation error.")
         return
     H = np.asarray(H)
     scale = max(1.0, np.max(np.abs(H)))
     defect = np.max(np.abs(H - H.conj().T))
     if defect > MAG_THRESHOLD * scale:
         raise ValueError(f"{what} is not Hermitian (max |H - H^dag| = {defect:.3g}). "
-                         "Check the mechanism for a sign/conjugation error.")
+                         "Check the system for a sign/conjugation error.")
 
 
 def _check_density_matrix(rho, what="rho0"):
@@ -62,28 +62,28 @@ def _check_density_matrix(rho, what="rho0"):
                       "make sure that's intentional.", stacklevel=3)
 
 
-def _reject_dissipative(mechanism, t0, cls_name, alternative="LindbladEvolution"):
+def _reject_dissipative(system, t0, cls_name, alternative="LindbladEvolution"):
     """Closed-system evolutions silently IGNORE jump operators -- so refuse a
-    dissipative mechanism outright instead of producing wrong physics.
+    dissipative system outright instead of producing wrong physics.
 
     Sampling `jump_operators(t0)` alone would miss a channel that switches on at
     t > t0 (a time-dependent coefficient vanishing at t0). A term-layer
     Model declares its channels structurally, so check that registry when
-    it exists; for a hand-written Mechanism, sampling at t0 is all we have."""
-    structural = getattr(mechanism, "jumps", None)
+    it exists; for a hand-written System, sampling at t0 is all we have."""
+    structural = getattr(system, "jumps", None)
     dissipative = bool(structural) if isinstance(structural, dict) else False
     if not dissipative:
-        jumps = getattr(mechanism, "jump_operators", None)
+        jumps = getattr(system, "jump_operators", None)
         dissipative = callable(jumps) and len(jumps(t0)) > 0
     if dissipative:
         raise ValueError(
-            f"{cls_name} solves closed-system dynamics, but {type(mechanism).__name__} "
+            f"{cls_name} solves closed-system dynamics, but {type(system).__name__} "
             f"has jump operators -- its dissipation would be silently ignored. "
             f"Use {alternative} instead.")
 
 
-def _snapshot(mechanism):
-    """Digest of a mechanism's parameters, to detect mutation after binding (the
+def _snapshot(system):
+    """Digest of a system's parameters, to detect mutation after binding (the
     memoized solution would silently be stale physics). Returns None when the
     state isn't picklable (e.g. lambda coefficients) -- then the guard is
     skipped and the frozen-after-binding rule is on the caller.
@@ -92,10 +92,10 @@ def _snapshot(mechanism):
     a full pickle of (possibly large) array attributes. The pickling itself is
     the cost, and it is unavoidable if the check is to be sound -- see
     `check_mutation=False` on the evolution classes to opt out in hot loops."""
-    if mechanism is None:
+    if system is None:
         return None
     try:
-        raw = pickle.dumps({k: v for k, v in vars(mechanism).items()
+        raw = pickle.dumps({k: v for k, v in vars(system).items()
                             if not k.startswith("_")})
     except Exception:
         return None
@@ -157,10 +157,10 @@ class _ExtendableSolver:
     from the nearest solved boundary -- an exact continuation of the same ODE,
     never an extrapolation past solved data.
 
-    Mechanism breakpoints (discontinuities in H(t)) are never integrated
+    System breakpoints (discontinuities in H(t)) are never integrated
     across: the solve is split there and restarted, because an adaptive
     stepper straddling a jump can silently accept an interpolant fitted to
-    the wrong physics. If the mechanism declares `piecewise_constant = True`
+    the wrong physics. If the system declares `piecewise_constant = True`
     and the evolution allows it (Schrodinger-type equations), each interval
     is instead propagated EXACTLY via eigendecomposition -- no ODE at all.
 
@@ -169,15 +169,15 @@ class _ExtendableSolver:
     integration performed is printed.
 
     `check_mutation=False` disables the stale-physics guard, which otherwise
-    pickles the mechanism's parameters once per `state_at` call. That costs
-    ~0.3 ms for a mechanism carrying a 200x200 array attribute, so it is worth
+    pickles the system's parameters once per `state_at` call. That costs
+    ~0.3 ms for a system carrying a 200x200 array attribute, so it is worth
     turning off in an optimizer inner loop -- and only there, since you then own
     the frozen-after-binding rule yourself.
     """
 
     def __init__(self, rhs, initial, t0: float = 0.0,
                  rtol=1e-8, atol=1e-10, method="RK45", verbose=None,
-                 mechanism=None, label=None, expm_ok=False, check_mutation=True):
+                 system=None, label=None, expm_ok=False, check_mutation=True):
         self.rhs = rhs
         self.initial = np.asarray(initial)
         self.t0 = t0
@@ -185,10 +185,10 @@ class _ExtendableSolver:
         self.atol = atol
         self.method = method
         self.verbose = verbose
-        self.mechanism = mechanism
+        self.system = system
         self.label = label or type(self).__name__
-        self._expm = bool(expm_ok and getattr(mechanism, "piecewise_constant", False))
-        bps = getattr(mechanism, "breakpoints", None)
+        self._expm = bool(expm_ok and getattr(system, "piecewise_constant", False))
+        bps = getattr(system, "breakpoints", None)
         self._breakpoints = np.sort(np.asarray(bps(), dtype=float)) if callable(bps) else np.array([])
         self._nfev = 0       # accumulated rhs evaluations, for report()
         self._nsteps = 0     # accumulated accepted steps, for report()
@@ -197,10 +197,10 @@ class _ExtendableSolver:
         self._lo_t, self._hi_t = t0, t0
         self._lo_y = self._hi_y = np.asarray(self.initial, dtype=complex).reshape(-1)  # flat state
         self._check_mutation = bool(check_mutation)
-        self._mech_state = _snapshot(mechanism) if self._check_mutation else None
-        if (self._check_mutation and mechanism is not None
-                and self._mech_state is None and self._verbose):
-            print(f"[{self.label}] note: {type(mechanism).__name__} has unpicklable "
+        self._system_state = _snapshot(system) if self._check_mutation else None
+        if (self._check_mutation and system is not None
+                and self._system_state is None and self._verbose):
+            print(f"[{self.label}] note: {type(system).__name__} has unpicklable "
                   "parameters (e.g. lambda coefficients), so the stale-physics guard "
                   "is unavailable -- do not mutate it while this evolution is alive.")
 
@@ -208,14 +208,14 @@ class _ExtendableSolver:
     def _verbose(self):
         return config.VERBOSE if self.verbose is None else self.verbose
 
-    def _check_mechanism_unchanged(self):
-        if self._mech_state is None:
+    def _check_system_unchanged(self):
+        if self._system_state is None:
             return  # unpicklable parameters, or opted out -- rule is on the caller
-        if _snapshot(self.mechanism) != self._mech_state:
+        if _snapshot(self.system) != self._system_state:
             raise RuntimeError(
-                f"[{self.label}] {type(self.mechanism).__name__}'s parameters changed "
+                f"[{self.label}] {type(self.system).__name__}'s parameters changed "
                 "after this evolution was created. The memoized solution would silently "
-                "continue from stale physics -- build a new mechanism + evolution instead.")
+                "continue from stale physics -- build a new system + evolution instead.")
 
     def _split_at_breakpoints(self, t_start, t_end):
         """Points partitioning [t_start, t_end] (either direction) so that no
@@ -229,14 +229,14 @@ class _ExtendableSolver:
         """Solve one breakpoint-free interval; returns a y_of_t callable."""
         if self._expm:
             if self._verbose:
-                print(f"[{self.label}] expm-propagating {self.mechanism!r}: "
+                print(f"[{self.label}] expm-propagating {self.system!r}: "
                       f"t={t_start:.6g} -> {t_end:.6g} (piecewise-constant H, exact)")
-            H = self.mechanism.hamiltonian((t_start + t_end) / 2)  # constant on interval
-            if _sp.issparse(H):  # sparse mechanism: exponential action, no dense eigh
+            H = self.system.hamiltonian((t_start + t_end) / 2)  # constant on interval
+            if _sp.issparse(H):  # sparse system: exponential action, no dense eigh
                 return _ExpmSegment(H, t_start, y_start, self.initial.shape[0])
             return _EighSegment(H, t_start, y_start, self.initial.shape[0])
         if self._verbose:
-            print(f"[{self.label}] integrating {self.mechanism!r}: "
+            print(f"[{self.label}] integrating {self.system!r}: "
                   f"t={t_start:.6g} -> {t_end:.6g}, method={self.method}, "
                   f"rtol={self.rtol:g}, atol={self.atol:g}")
         sol = solve_ivp(
@@ -295,10 +295,10 @@ class _ExtendableSolver:
     def state_at(self, t) -> np.ndarray:
         """Evolved state at time(s) t (scalar or array-like). Extends the
         solved range as needed; never extrapolates."""
-        # Checked on EVERY query, not just on extension: a mutated mechanism is
+        # Checked on EVERY query, not just on extension: a mutated system is
         # stale physics even when the answer comes from an already-solved
         # segment, and returning it silently is exactly the failure this guards.
-        self._check_mechanism_unchanged()
+        self._check_system_unchanged()
         t_arr = np.atleast_1d(np.asarray(t, dtype=float))
         self._extend_to(t_arr.min(), t_arr.max())
         out = np.empty((len(t_arr),) + self.initial.shape, dtype=complex)
@@ -309,12 +309,12 @@ class _ExtendableSolver:
         return np.asarray(out)
 
 
-def _schrodinger_rhs(mechanism, shape):
+def _schrodinger_rhs(system, shape):
     """dX/dt = -i H(t) X, for X a ket (d,) or an operator (d,d)."""
     def rhs(t, y_flat):
         # A sparse H is kept sparse -- csr @ dense returns a dense ndarray,
         # which is all the ODE solver ever sees.
-        H = mechanism.hamiltonian(t)
+        H = system.hamiltonian(t)
         if not _sp.issparse(H):
             H = np.asarray(H)
         X = y_flat.reshape(shape)
@@ -322,12 +322,12 @@ def _schrodinger_rhs(mechanism, shape):
     return rhs
 
 
-def _default_subsystems(mechanism, subsystems):
-    """Explicit `subsystems=` wins; otherwise a mechanism that knows its own
+def _default_subsystems(system, subsystems):
+    """Explicit `subsystems=` wins; otherwise a system that knows its own
     tensor structure (e.g. a term-layer Model) supplies it."""
     if subsystems is not None:
         return dict(subsystems)
-    return dict(getattr(mechanism, "subsystems", {}) or {})
+    return dict(getattr(system, "subsystems", {}) or {})
 
 
 class Report(dict):
@@ -336,7 +336,7 @@ class Report(dict):
     `ev.report()["truncation"]` for the numbers, `print(ev.report())` for a
     human. See `_Reportable.report`."""
 
-    _ORDER = ("mechanism", "equation", "solved_range", "segments", "propagation",
+    _ORDER = ("system", "equation", "solved_range", "segments", "propagation",
               "rhs_evals", "steps", "breakpoints", "mutation_guard",
               "truncation", "unitarity_defect", "trace")
 
@@ -380,7 +380,7 @@ class _Reportable:
         tells you so without deciding what to do about it.
         """
         solver = getattr(self, "_solver", None)
-        rep = Report(mechanism=repr(getattr(self, "mechanism", None)),
+        rep = Report(system=repr(getattr(self, "system", None)),
                      equation=type(self).__name__)
 
         if solver is None:      # analytic-unitary path: no ODE ever runs
@@ -399,8 +399,8 @@ class _Reportable:
             rep["breakpoints"] = len(solver._breakpoints)
             rep["mutation_guard"] = (
                 "disabled (check_mutation=False)" if not solver._check_mutation
-                else "active" if solver._mech_state is not None
-                else "UNAVAILABLE -- mechanism has unpicklable parameters "
+                else "active" if solver._system_state is not None
+                else "UNAVAILABLE -- system has unpicklable parameters "
                      "(e.g. lambda coefficients); do not mutate it")
             if t is None and solved[0] != solved[1]:
                 t = solver._hi_t
@@ -432,24 +432,24 @@ class HamiltonianEvolution(_Reportable):
 
     `subsystems`: ordered {name: dim} of this state's tensor factors, needed
     by `trace_out`. Order must match how `initial` was built (e.g. via
-    `otimes`). Defaults to the mechanism's own `.subsystems` when it has one
+    `otimes`). Defaults to the system's own `.subsystems` when it has one
     (term-layer Models always do).
 
     Every time-parametrized method accepts a scalar t or an array of times.
     """
 
-    def __init__(self, mechanism, initial, t0: float = 0.0,
+    def __init__(self, system, initial, t0: float = 0.0,
                  subsystems: dict | None = None, truncation=None,
                  ladders=None, **solver_kwargs):
         initial = np.asarray(initial)
-        _reject_dissipative(mechanism, t0, "HamiltonianEvolution")
-        _check_hermitian(mechanism.hamiltonian(t0))
-        self.mechanism = mechanism
-        rhs = _schrodinger_rhs(mechanism, initial.shape)
-        self._solver = _ExtendableSolver(rhs, initial, t0, mechanism=mechanism,
+        _reject_dissipative(system, t0, "HamiltonianEvolution")
+        _check_hermitian(system.hamiltonian(t0))
+        self.system = system
+        rhs = _schrodinger_rhs(system, initial.shape)
+        self._solver = _ExtendableSolver(rhs, initial, t0, system=system,
                                          label="HamiltonianEvolution", expm_ok=True,
                                          **solver_kwargs)
-        self.subsystems = _default_subsystems(mechanism, subsystems)
+        self.subsystems = _default_subsystems(system, subsystems)
         self._truncation, self._ladders = truncation, ladders
         self._trunc_seen = set()
 
@@ -493,10 +493,10 @@ class HamiltonianEvolution(_Reportable):
         basis within the degenerate subspace are arbitrary, so per-level
         quantities can jump discontinuously exactly where gaps close.
         """
-        # densified even for a sparse mechanism: a full eigendecomposition is
+        # densified even for a sparse system: a full eigendecomposition is
         # inherently dense (O(d^2) memory) -- fine as a diagnostic at moderate
         # dim, not something to call at dimensions only sparse can evolve
-        H = _dense(self.mechanism.hamiltonian(t))
+        H = _dense(self.system.hamiltonian(t))
         return np.linalg.eigh(H)  # Hermitian eigendecomposition, ascending order
 
     def adiabatic_populations(self, t) -> np.ndarray:
@@ -529,36 +529,36 @@ class UnitaryEvolution(_Reportable):
     Pass either `initial` (an existing propagator to continue) or `dim`
     (to start from the dim x dim identity at t0).
 
-    A mechanism that implements its own `.unitary(t)` (an analytic Magnus/RWA
+    A system that implements its own `.unitary(t)` (an analytic Magnus/RWA
     result defined as a gate) is consumed directly -- no ODE solve, no U -> H
     inversion. In that case `initial` must be omitted or I: composing an
-    analytic U(t, t0) with a different starting propagator is the mechanism's
+    analytic U(t, t0) with a different starting propagator is the system's
     business, not something to guess here.
     """
 
     _report_kind = "unitary"
 
-    def __init__(self, mechanism, initial=None, dim: int | None = None,
+    def __init__(self, system, initial=None, dim: int | None = None,
                  t0: float = 0.0, subsystems: dict | None = None,
                  truncation=None, ladders=None, **solver_kwargs):
-        _reject_dissipative(mechanism, t0, "UnitaryEvolution")
-        self.mechanism = mechanism
-        self.subsystems = _default_subsystems(mechanism, subsystems)
+        _reject_dissipative(system, t0, "UnitaryEvolution")
+        self.system = system
+        self.subsystems = _default_subsystems(system, subsystems)
         self._truncation, self._ladders = truncation, ladders
         self._trunc_seen = set()
-        self._analytic = provides_unitary(mechanism) and not provides_hamiltonian(mechanism)
+        self._analytic = provides_unitary(system) and not provides_hamiltonian(system)
         if self._analytic:
             if initial is not None and not np.allclose(np.asarray(initial),
                                                        np.eye(initial.shape[0])):
-                raise ValueError("mechanism provides an analytic unitary; a non-identity "
+                raise ValueError("system provides an analytic unitary; a non-identity "
                                  "`initial` propagator can't be composed with it here")
             if t0 != 0:
                 # .unitary(t) is U(t, its_own_origin); re-anchoring it at t0 means
                 # U(t) U(t0)^dag, which is only the propagator from t0 when H
-                # commutes with itself at different times. The mechanism's call.
+                # commutes with itself at different times. The system's call.
                 raise ValueError(
-                    f"mechanism provides an analytic unitary from its own origin, so "
-                    f"t0={t0} would be silently ignored. Build the mechanism with the "
+                    f"system provides an analytic unitary from its own origin, so "
+                    f"t0={t0} would be silently ignored. Build the system with the "
                     f"origin you want, or evolve its .hamiltonian(t) instead.")
             self._solver = None
             return
@@ -571,9 +571,9 @@ class UnitaryEvolution(_Reportable):
                              f"{np.shape(initial)[0]}) and dim={dim}, which disagree; "
                              f"`initial` wins, so drop `dim` or make them match")
         initial = np.asarray(initial)
-        _check_hermitian(mechanism.hamiltonian(t0))
-        rhs = _schrodinger_rhs(mechanism, initial.shape)
-        self._solver = _ExtendableSolver(rhs, initial, t0, mechanism=mechanism,
+        _check_hermitian(system.hamiltonian(t0))
+        rhs = _schrodinger_rhs(system, initial.shape)
+        self._solver = _ExtendableSolver(rhs, initial, t0, system=system,
                                          label="UnitaryEvolution", expm_ok=True,
                                          **solver_kwargs)
 
@@ -581,9 +581,9 @@ class UnitaryEvolution(_Reportable):
         """The propagator U(t) (scalar t) or a stack of them (array t)."""
         if self._analytic:
             if np.ndim(t) == 0:
-                U = np.asarray(self.mechanism.unitary(t))
+                U = np.asarray(self.system.unitary(t))
             else:
-                U = np.asarray(np.array([np.asarray(self.mechanism.unitary(tt))
+                U = np.asarray(np.array([np.asarray(self.system.unitary(tt))
                                        for tt in np.asarray(t)]))
         else:
             U = self._solver.state_at(t)
@@ -609,30 +609,30 @@ class DensityMatrixEvolution(_Reportable):
         rho(t) = U(t) rho0 U(t)^dagger
 
     Computed by evolving the propagator U(t) (a UnitaryEvolution -- or the
-    mechanism's own analytic `.unitary(t)` if it has one) and conjugating on
+    system's own analytic `.unitary(t)` if it has one) and conjugating on
     demand. Exact up to the accuracy of U itself; rho inherits U's solver
     error twice (U and U^dag), so `unitarity_defect(t)` is exposed as the
-    relevant diagnostic. Once a mechanism has dissipation (jump operators)
+    relevant diagnostic. Once a system has dissipation (jump operators)
     the conjugation identity breaks and LindbladEvolution is required --
-    passing a dissipative mechanism here raises.
+    passing a dissipative system here raises.
     """
 
     _report_kind = "density"
 
-    def __init__(self, mechanism, rho0, t0: float = 0.0,
+    def __init__(self, system, rho0, t0: float = 0.0,
                  subsystems: dict | None = None, truncation=None,
                  ladders=None, **solver_kwargs):
-        _reject_dissipative(mechanism, t0, "DensityMatrixEvolution")
+        _reject_dissipative(system, t0, "DensityMatrixEvolution")
         _check_density_matrix(rho0)
-        self.mechanism = mechanism
+        self.system = system
         self.rho0 = np.asarray(rho0)
         dim = self.rho0.shape[0]
         # the inner propagator's own guard is off: what matters physically is
         # the ceiling population of rho, which depends on rho0, and warning
         # about U as well would fire twice for one problem
-        self._U = UnitaryEvolution(mechanism, dim=dim, t0=t0,
+        self._U = UnitaryEvolution(system, dim=dim, t0=t0,
                                    truncation=False, **solver_kwargs)
-        self.subsystems = _default_subsystems(mechanism, subsystems)
+        self.subsystems = _default_subsystems(system, subsystems)
         self._truncation, self._ladders = truncation, ladders
         self._trunc_seen = set()
 
@@ -657,18 +657,18 @@ class DensityMatrixEvolution(_Reportable):
         return partial_trace(rho, self.subsystems, names)
 
 
-def _lindblad_rhs(mechanism, dim):
+def _lindblad_rhs(system, dim):
     """d(rho)/dt = -i[H(t),rho] + sum_k ( L_k rho L_k^dagger - 1/2{L_k^dagger L_k, rho} )."""
     def rhs(t, y_flat):
         rho = y_flat.reshape(dim, dim)
         # rho stays dense (it is generically full); sparse H / L only speed up
         # the products against it (sparse @ dense and dense @ sparse both
         # return dense ndarrays).
-        H = mechanism.hamiltonian(t)
+        H = system.hamiltonian(t)
         if not _sp.issparse(H):
             H = np.asarray(H)
         drho = -1j * (H @ rho - rho @ H)  # coherent part: -i[H, rho]
-        for L in mechanism.jump_operators(t):
+        for L in system.jump_operators(t):
             if not _sp.issparse(L):
                 L = np.asarray(L)
             Ld = L.conj().T
@@ -683,7 +683,7 @@ class LindbladEvolution(_Reportable):
 
         d(rho)/dt = -i[H(t), rho] + sum_k ( L_k rho L_k^dagger - 1/2{L_k^dagger L_k, rho} )
 
-    Needed whenever a mechanism has jump operators -- dissipation into a bath
+    Needed whenever a system has jump operators -- dissipation into a bath
     too large/uncharacterized to model as a subsystem. Genuinely different
     from HamiltonianEvolution/UnitaryEvolution's dX/dt = -iHX: not obtainable
     via conjugation by a propagator the way DensityMatrixEvolution is.
@@ -696,20 +696,20 @@ class LindbladEvolution(_Reportable):
 
     _report_kind = "density"
 
-    def __init__(self, mechanism, rho0, t0: float = 0.0,
+    def __init__(self, system, rho0, t0: float = 0.0,
                  subsystems: dict | None = None, truncation=None,
                  ladders=None, **solver_kwargs):
         _check_density_matrix(rho0)
-        _check_hermitian(mechanism.hamiltonian(t0))
-        self.mechanism = mechanism
+        _check_hermitian(system.hamiltonian(t0))
+        self.system = system
         self.rho0 = np.asarray(rho0)
         self.t0 = t0
         dim = self.rho0.shape[0]
-        rhs = _lindblad_rhs(mechanism, dim)
-        self._solver = _ExtendableSolver(rhs, self.rho0, t0, mechanism=mechanism,
+        rhs = _lindblad_rhs(system, dim)
+        self._solver = _ExtendableSolver(rhs, self.rho0, t0, system=system,
                                          label="LindbladEvolution", expm_ok=False,
                                          **solver_kwargs)
-        self.subsystems = _default_subsystems(mechanism, subsystems)
+        self.subsystems = _default_subsystems(system, subsystems)
         self._truncation, self._ladders = truncation, ladders
         self._trunc_seen = set()
 

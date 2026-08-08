@@ -4,7 +4,7 @@ This is the transparency document: for each layer of the package, the physics it
 implements, the functions that implement it, and the numerical considerations. Read top
 to bottom once; after that the section headers work as a reference.
 
-Prerequisite vocabulary — *subsystem, term, group, registry, Model, Mechanism* — is
+Prerequisite vocabulary — *subsystem, term, group, registry, Model, System* — is
 defined once, in the hierarchy diagram of the [README](README.md). For which functions
 to call in what order, see [GUIDE.md](GUIDE.md).
 
@@ -16,14 +16,14 @@ to call in what order, see [GUIDE.md](GUIDE.md).
 
 $$ i\,\frac{d}{dt}\lvert\psi(t)\rangle = H(t)\,\lvert\psi(t)\rangle $$
 
-**Code.** `HamiltonianEvolution(mechanism, psi0, t0=0)`, then `state_at(t)` (scalar or
+**Code.** `HamiltonianEvolution(system, psi0, t0=0)`, then `state_at(t)` (scalar or
 array of times). Also on it: `trace_out(*names, t=...)` (reduced density matrix, batched
 over t), `instantaneous_eigenbasis(t)`, `adiabatic_populations(t)`, `adiabatic_fidelity(t)`.
 
 **Numerics.** The state is flattened to a complex vector and handed to an adaptive
 Runge–Kutta integrator (`scipy.solve_ivp`, RK45 default, `rtol=1e-8`, `atol=1e-10`,
 overridable). The right-hand side is literally `-1j * H(t) @ psi` — every RHS evaluation
-calls `mechanism.hamiltonian(t)`, which is why the term layer caches its static part.
+calls `system.hamiltonian(t)`, which is why the term layer caches its static part.
 
 Considerations baked into the solver (`core/evolution.py::_ExtendableSolver`):
 
@@ -32,21 +32,21 @@ Considerations baked into the solver (`core/evolution.py::_ExtendableSolver`):
   same ODE, never re-solved, and **never extrapolated**: a time outside the solved range
   always triggers a real continuation solve. Times inside the range are evaluated with the
   integrator's own dense output (its internal interpolant, accurate to the solve tolerance).
-- **Frozen mechanisms.** Solved segments are memoized, so mutating a mechanism's parameters
+- **Frozen systems.** Solved segments are memoized, so mutating a system's parameters
   after binding would silently continue from stale physics. The evolution snapshots the
-  mechanism's parameters at construction and raises if they change.
+  system's parameters at construction and raises if they change.
 - **Discontinuities.** An adaptive stepper assumes a smooth RHS; a step that straddles a jump
-  in H(t) can be accepted with an interpolant fitted across the jump. Mechanisms therefore
+  in H(t) can be accepted with an interpolant fitted across the jump. Systems therefore
   declare `breakpoints()` (e.g. Trotter step edges) and the solver restarts integration at
   each one — no step ever crosses a declared discontinuity.
-- **Piecewise-constant fast path.** If a mechanism also sets `piecewise_constant = True`,
+- **Piecewise-constant fast path.** If a system also sets `piecewise_constant = True`,
   each interval is propagated *exactly*: diagonalize the constant H once
   (`H = V E V†`, Hermitian) and apply $U(\Delta t) = V e^{-iE\Delta t} V^\dagger$. No ODE,
   no stepping error — this is what makes Trotter simulation both fast and honest.
 - **Guards.** At construction the evolution checks H(t0) is Hermitian (a sign/conjugation
-  error otherwise shows up as mysterious "decay") and refuses mechanisms that carry jump
+  error otherwise shows up as mysterious "decay") and refuses systems that carry jump
   operators (closed-system solver would silently ignore the dissipation).
-- **Verbosity.** Every real integration prints (mechanism, range, method, tolerances,
+- **Verbosity.** Every real integration prints (system, range, method, tolerances,
   step/eval counts). Wrap optimizer loops in `with htdse.quiet():`.
 
 **Sparse storage (`Model.sparse()`).** A term-layer Hamiltonian is a sum of embedded
@@ -80,13 +80,13 @@ Since $H(t)X$ acts columnwise, the same solver handles it — a ket is just the 
 (Corollary you can exploit: stack several initial kets as columns and evolve them all in one
 solve.)
 
-**Code.** `UnitaryEvolution(mechanism, dim=d)`, `unitary_at(t)`,
+**Code.** `UnitaryEvolution(system, dim=d)`, `unitary_at(t)`,
 `unitarity_defect(t)` = $\max|U^\dagger U - \mathbb 1|$ (how far numerical error has drifted
 U off the unitary group — *the* accuracy diagnostic for anything built on U).
 
 **The dual primitive.** $H(t)\to U$ is always well-defined (above). The reverse is not:
 $H_{\rm eff} = i\log(U)/t$ is branch-ambiguous (eigenphases fixed only mod $2\pi$) and
-collapses real time-dependence into one constant matrix. So a mechanism that is naturally a
+collapses real time-dependence into one constant matrix. So a system that is naturally a
 *gate* — an analytic Magnus or RWA result, like `MSMagnus` — implements `.unitary(t)` only,
 and `UnitaryEvolution`/`DensityMatrixEvolution` consume it directly with no ODE and no
 inversion.
@@ -102,7 +102,7 @@ $$ \rho(t) = U(t)\,\rho_0\,U^\dagger(t) $$
 Mixedness here is *information you set aside* (entanglement with a subsystem you'll trace
 out), not information lost to an environment.
 
-**Code.** `DensityMatrixEvolution(mechanism, rho0)` — internally evolves U (one solve) and
+**Code.** `DensityMatrixEvolution(system, rho0)` — internally evolves U (one solve) and
 conjugates on demand; batched over time via `einsum`. Note ρ inherits U's solver error twice
 (U and U†), hence `unitarity_defect` is exposed here too.
 
@@ -155,12 +155,12 @@ and fails as a bound for $\bar n \lesssim 1$.
 
 **Closed vs open decision rule:** a finite subsystem you *can* model (a spectator qubit,
 one motional mode) stays in the Hilbert space — unitary evolution + `trace_out`. Lindblad is
-only for baths you can't. (The closed-system classes enforce this: they raise on a mechanism
+only for baths you can't. (The closed-system classes enforce this: they raise on a system
 with jump operators.)
 
-**Code.** A mechanism overrides `jump_operators(t) -> [L_k]` (term-layer:
+**Code.** A system overrides `jump_operators(t) -> [L_k]` (term-layer:
 `jump(a, on="mode", coeff=np.sqrt(gamma))` composes like any other group). Then
-`LindbladEvolution(mechanism, rho0)`.
+`LindbladEvolution(system, rho0)`.
 
 **Numerics.** ρ is flattened to a $d^2$ complex vector and the full RHS above is integrated
 with the same lazy solver — so cost scales as $d^2$ state size (a 2-qubit ⊗ 15-Fock problem
@@ -221,7 +221,7 @@ $$ U(T) \approx \prod_{k=n-1}^{0} e^{-i H(t_k^{\rm mid})\,\Delta t} $$
 Sampling H at the step *midpoint* makes each factor accurate to $O(\Delta t^3)$ against a
 smoothly varying H (midpoint rule), i.e. global error $O(\Delta t^2)$.
 
-**Code.** `TrotterizedMechanism(inner, t_start, t_stop, n_steps)` wraps *any* mechanism into
+**Code.** `TrotterizedSystem(inner, t_start, t_stop, n_steps)` wraps *any* system into
 its piecewise-constant version. It declares the step edges as `breakpoints()` (solver never
 integrates across an edge) and `piecewise_constant = True` (each step propagated exactly via
 eigendecomposition, section 1; for a sparse model the dense eigendecomposition is replaced by
@@ -235,7 +235,7 @@ Error injection composes at the term layer:
 ```python
 H      = ms_lamb_dicke1(...)                      # groups: carrier_q0, sdf_q0, ...
 H_err  = H + pauli_term("Z0", coeff=eps_z)        # static sigma_z error, just added
-mech   = TrotterizedMechanism(H_err, 0, T, n)     # discretize the whole thing
+mech   = TrotterizedSystem(H_err, 0, T, n)     # discretize the whole thing
 ```
 
 ---
@@ -303,7 +303,7 @@ reaches.
 
 **How the three levels are meant to be used together:** `MSMagnus` is the target;
 `ms_lamb_dicke1/2` (optionally Trotterized, optionally + `pauli_term("Z0", ...)` errors,
-optionally with a swapped/noisy drive group) is the realized mechanism; `compare_over` with
+optionally with a swapped/noisy drive group) is the realized system; `compare_over` with
 `process_fidelity`/`fidelity` quantifies the gap. Cross-validation of the suite itself:
 Magnus vs ODE-solved `rwa=True` builder agree to <1e-7, α and Θ match their analytic
 constant-Ω forms, and the loop-closure gate equals the pure geometric-phase gate
@@ -317,8 +317,8 @@ Numbers read off this framework must be real results of a solve, not artifacts:
 
 1. Never interpolate/extrapolate past solved data — extend the integration instead (§1).
 2. Never integrate across a declared discontinuity (§1, §7).
-3. Never continue from a mutated mechanism — stale-cache guard (§1).
-4. Never silently drop physics — closed-system classes reject dissipative mechanisms (§4);
+3. Never continue from a mutated system — stale-cache guard (§1).
+4. Never silently drop physics — closed-system classes reject dissipative systems (§4);
    non-Hermitian H and invalid ρ₀ are rejected at construction.
 5. Never hide what was computed — every integration prints by default (`quiet()` to opt out),
    and every approximation boundary (RWA, LD order, Magnus termination, Fock truncation,

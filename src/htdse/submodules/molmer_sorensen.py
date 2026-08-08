@@ -1,4 +1,4 @@
-"""Molmer-Sorensen mechanism suite: bichromatic spin-dependent force on N spins
+"""Molmer-Sorensen system suite: bichromatic spin-dependent force on N spins
 coupled to ANY NUMBER of motional modes, at three levels of approximation.
 
 Conventions follow C. Monroe, "Primer on Molmer-Sorensen Gates in Trapped Ions"
@@ -91,7 +91,7 @@ from typing import NamedTuple
 import numpy as np
 from scipy.linalg import expm
 
-from ..core.mechanism import Mechanism
+from ..core.system import System
 from ..core.subsystems import embed
 from ..core.terms import Model, plus_hc, term
 from .harmonic_oscillator import annihilation
@@ -307,7 +307,7 @@ def _beat(modes, n_ions, tone="detune"):
 # 1) ideal / closed-form: the terminated Magnus expansion
 # ---------------------------------------------------------------------------
 
-class MSMagnus(Mechanism):
+class MSMagnus(System):
     """Exact (terminated-Magnus) unitary of the post-RWA MS spin-dependent
     force. Defined as a GATE (`.unitary(t)` only) -- `UnitaryEvolution` and
     `DensityMatrixEvolution` consume it directly with no ODE solve.

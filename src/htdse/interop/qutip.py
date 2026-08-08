@@ -127,7 +127,7 @@ def to_qutip(model, include_jumps=True):
 
 
 def as_mechanism(source, subsystems=None, jumps=None):
-    """A qutip `Qobj` / `QobjEvo` -> an htdse `Mechanism`, so the htdse evolution
+    """A qutip `Qobj` / `QobjEvo` -> an htdse `System`, so the htdse evolution
     classes (and their guards, and `compare_over`) can consume it.
 
     source:      a Qobj (constant H) or QobjEvo (time-dependent).
@@ -137,7 +137,7 @@ def as_mechanism(source, subsystems=None, jumps=None):
                  convention (== qutip's).
     """
     qutip = _qt()
-    from ..core.mechanism import Mechanism
+    from ..core.system import System
 
     dims = list(source.dims[0])
     if subsystems is None:
@@ -148,7 +148,7 @@ def as_mechanism(source, subsystems=None, jumps=None):
     # constant operator as if it were a time-dependent one and raise.
     time_dependent = isinstance(source, qutip.QobjEvo)
 
-    class _QutipMechanism(Mechanism):
+    class _QutipSystem(System):
         def __init__(self):
             self.subsystems = dict(subsystems)
             self.source = source
@@ -161,6 +161,6 @@ def as_mechanism(source, subsystems=None, jumps=None):
             return list(jump_arrays)
 
         def __repr__(self):
-            return f"QutipMechanism({type(self.source).__name__}, dims={dims})"
+            return f"QutipSystem({type(self.source).__name__}, dims={dims})"
 
-    return _QutipMechanism()
+    return _QutipSystem()

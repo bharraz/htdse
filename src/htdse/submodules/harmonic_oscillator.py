@@ -1,10 +1,10 @@
 """Bosonic mode (harmonic oscillator) operators, Fock-space truncated at
-dimension n_max+1, plus a thermal-bath Lindblad mechanism for a damped and
+dimension n_max+1, plus a thermal-bath Lindblad system for a damped and
 dephased motional mode (e.g. trapped-ion motional heating/dephasing).
 """
 import numpy as np
 
-from ..core.mechanism import Mechanism
+from ..core.system import System
 
 
 def annihilation(n_max: int) -> np.ndarray:
@@ -51,7 +51,7 @@ def fock(n: int, n_max: int) -> np.ndarray:
     return psi
 
 
-class ThermalMotionalDecoherence(Mechanism):
+class ThermalMotionalDecoherence(System):
     """Damped + dephased quantum harmonic oscillator coupled to a thermal
     reservoir (e.g. trapped-ion motional-mode heating and dephasing):
 

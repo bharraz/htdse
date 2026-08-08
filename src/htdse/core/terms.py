@@ -8,7 +8,7 @@ term being
 
 plus a registry {subsystem name: dimension}. The dense matrix on the joint
 space is a *materialization* computed only when an evolution asks for
-`.hamiltonian(t)` -- which makes a `Model` a drop-in `Mechanism`.
+`.hamiltonian(t)` -- which makes a `Model` a drop-in `System`.
 
 Because terms carry subsystem *names*, composition is literal:
 
@@ -49,7 +49,7 @@ from typing import Callable, Union
 import numpy as np
 from scipy import sparse as _sp
 
-from .mechanism import Mechanism
+from .system import System
 from .subsystems import embed
 
 _anon_counter = itertools.count()  # unique keys for unnamed term groups
@@ -57,7 +57,7 @@ _anon_counter = itertools.count()  # unique keys for unnamed term groups
 Coefficient = Union[complex, float, Callable[[float], complex]]
 
 
-class Term:
+class _Term:
     """One product term: coeff (scalar or f(t)) x local ops on named subsystems.
 
     `ops` maps a subsystem name (str) -- or a tuple of names, for a joint
@@ -108,7 +108,7 @@ class Term:
             out = np.kron(out, m)
         return out
 
-    def scaled(self, c: Coefficient) -> "Term":
+    def scaled(self, c: Coefficient) -> "_Term":
         if callable(c) and callable(self.coeff):
             f, g = c, self.coeff
             coeff = lambda t: f(t) * g(t)
@@ -120,9 +120,9 @@ class Term:
             coeff = lambda t: c * g1(t)
         else:
             coeff = c * self.coeff
-        return Term(coeff, dict(self.ops), self.dims, self.frame)
+        return _Term(coeff, dict(self.ops), self.dims, self.frame)
 
-    def dag(self) -> "Term":
+    def dag(self) -> "_Term":
         """Hermitian conjugate: (A (x) B)^dag = A^dag (x) B^dag, coeff conjugated."""
         ops = {k: m.conj().T for k, m in self.ops.items()}
         if callable(self.coeff):
@@ -130,7 +130,7 @@ class Term:
             coeff = lambda t: np.conj(f(t))
         else:
             coeff = np.conj(self.coeff)
-        return Term(coeff, ops, self.dims, self.frame)
+        return _Term(coeff, ops, self.dims, self.frame)
 
 
 def _merge_registry(a: dict, b: dict) -> dict:
@@ -147,9 +147,9 @@ def _merge_registry(a: dict, b: dict) -> dict:
     return out
 
 
-class Model(Mechanism):
-    """A sum of named groups of Terms + a subsystem registry. Satisfies the
-    Mechanism protocol (`hamiltonian(t)`, `jump_operators(t)`), so it plugs
+class Model(System):
+    """A sum of named groups of terms + a subsystem registry. Satisfies the
+    `System` protocol (`hamiltonian(t)`, `jump_operators(t)`), so it plugs
     straight into any evolution class.
 
     Treat instances as immutable: every operation (+, *, dag, replace, ...)
@@ -297,7 +297,7 @@ class Model(Mechanism):
             raise KeyError(f"no term group named {name!r}")
         return out
 
-    # ---- materialization (the Mechanism protocol) -----------------------
+    # ---- materialization (the System protocol) --------------------------
 
     @property
     def dim(self) -> int:
@@ -306,7 +306,7 @@ class Model(Mechanism):
             d *= v
         return d
 
-    def _embed(self, term: Term):
+    def _embed(self, term: _Term):
         """Embed one term into the joint space: dense ndarray, or CSR when
         this Model is flagged sparse (embed() stays sparse throughout)."""
         if self.is_sparse:
@@ -321,8 +321,8 @@ class Model(Mechanism):
         serving the stale cache.
 
         Identity-level, not value-level: this catches terms added, removed, or
-        swapped, but NOT a Term mutated in place (`t.coeff = ...`), which keeps
-        its id. Rebuild the Model rather than edit a Term."""
+        swapped, but NOT a _Term mutated in place (`t.coeff = ...`), which keeps
+        its id. Rebuild the Model rather than edit a _Term."""
         return (tuple((k, tuple(id(t) for t in v)) for k, v in self.groups.items()),
                 tuple((k, tuple(id(t) for t in v)) for k, v in self.jumps.items()),
                 tuple(self.subsystems.items()),
@@ -450,7 +450,7 @@ def term(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     """
     ops, term_dims = _build_ops_and_dims(op, on, dims)
     key = name if name is not None else f"term{next(_anon_counter)}"
-    t = Term(coeff, ops, term_dims, frame)
+    t = _Term(coeff, ops, term_dims, frame)
     return Model(term_dims, groups={key: [t]})
 
 
@@ -464,7 +464,7 @@ def jump(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     is just another named group you can `replace()` or `without()`."""
     ops, term_dims = _build_ops_and_dims(op, on, dims)
     key = name if name is not None else f"jump{next(_anon_counter)}"
-    t = Term(coeff, ops, term_dims, None)
+    t = _Term(coeff, ops, term_dims, None)
     return Model(term_dims, jumps={key: [t]})
 
 

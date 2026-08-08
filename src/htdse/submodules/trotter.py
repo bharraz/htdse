@@ -1,6 +1,6 @@
-"""Trotterization as a mechanism wrapper.
+"""Trotterization as a System wrapper.
 
-`TrotterizedMechanism` turns ANY mechanism's H(t) into its piecewise-constant
+`TrotterizedSystem` turns ANY system's H(t) into its piecewise-constant
 version: H is sampled once per step and held. Because it declares its step
 edges as `breakpoints()` and sets `piecewise_constant = True`, the evolution
 layer (a) never lets the adaptive ODE stepper integrate across a step edge,
@@ -10,10 +10,10 @@ of smooth-interpolant artifacts, while remaining just another `H(t)`.
 """
 import numpy as np
 
-from ..core.mechanism import Mechanism
+from ..core.system import System
 
 
-class TrotterizedMechanism(Mechanism):
+class TrotterizedSystem(System):
     """Piecewise-constant discretization of `inner` over [t_start, t_stop]
     in `n_steps` equal steps; H on each step is inner.hamiltonian at the step
     midpoint (`sample="midpoint"`, second-order accurate) or left edge
@@ -36,7 +36,7 @@ class TrotterizedMechanism(Mechanism):
         self.t_start, self.t_stop, self.n_steps = t_start, t_stop, int(n_steps)
         self.sample = sample
         self._edges = np.linspace(t_start, t_stop, self.n_steps + 1)
-        # carry the inner mechanism's subsystem structure forward, if any
+        # carry the inner system's subsystem structure forward, if any
         self.subsystems = dict(getattr(inner, "subsystems", {}) or {})
 
     def _sample_time(self, t: float) -> float:
@@ -57,6 +57,10 @@ class TrotterizedMechanism(Mechanism):
         return self._edges  # step edges: H(t) is discontinuous exactly here
 
     def __repr__(self):
-        return (f"TrotterizedMechanism({self.inner!r}, "
+        return (f"TrotterizedSystem({self.inner!r}, "
                 f"[{self.t_start:g}, {self.t_stop:g}] / {self.n_steps} steps, "
                 f"sample={self.sample!r})")
+
+
+#: Back-compat alias for the pre-rename name.
+TrotterizedMechanism = TrotterizedSystem
