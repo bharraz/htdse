@@ -27,12 +27,16 @@ Named groups are the swap-out handle:
     model    = atom + mode + term(..., name="drive")
     realized = model.replace(drive=noisy_drive)   # same model, one entry swapped
 
-Storage is a toggle, not a type: `H.sparse()` returns the same Model flagged
-to materialize as scipy CSR matrices -- `hamiltonian(t)` / `jump_operators(t)`
-then return sparse matrices and the evolution classes switch to sparse
-matrix-vector products automatically. Worth it once the joint dimension
-reaches a few thousand (many ions / large Fock truncations); below that,
-dense is as fast or faster. The flag is sticky under composition.
+Storage is a backend detail, not a type: `H.sparse()` returns the same Model
+flagged to materialize as scipy CSR, and the evolution classes then use sparse
+matrix-vector products automatically. You never handle a CSR yourself --
+`hamiltonian(t)` and `jump_operators(t)` always hand back plain numpy arrays;
+only the solver sees the native storage. The flag is sticky under composition.
+
+Worth it from a joint dimension of a few hundred up (measured crossover ~200;
+5x faster at 256, 124x at 1024). Below that, dense wins on fixed overhead.
+Nothing switches by itself -- a Model past the threshold prints a one-time
+suggestion and leaves the decision to you.
 
 Physics caveats the framework cannot check for you:
 - Addition is literal. All terms must be written in the same frame (lab vs.
@@ -49,12 +53,42 @@ from typing import Callable, Union
 import numpy as np
 from scipy import sparse as _sp
 
+from . import config
 from .system import System
 from .subsystems import embed
 
 _anon_counter = itertools.count()  # unique keys for unnamed term groups
 
 Coefficient = Union[complex, float, Callable[[float], complex]]
+
+# A dense copy costs 16 bytes per entry, so at the dimensions where sparse
+# storage earns its keep it is not merely slow but impossible. Refuse with the
+# number rather than let numpy raise MemoryError three frames deeper.
+MAX_DENSE_BYTES = 2 * 1024 ** 3  # 2 GiB
+
+# When to SUGGEST sparse. A dense H(t) rebuild copies the whole dim^2 matrix
+# every call no matter how empty it is, while sparse tracks nnz -- so the
+# crossover is set by dimension, not fill. Measured at ~200 (below it sparse
+# loses on fixed overhead, ~3.7x slower at dim 128; above it sparse wins by
+# 5x at 256 and 124x at 1024). Fill only matters as a veto: an actually-dense
+# matrix gains nothing.
+SPARSE_HINT_DIM = 256
+SPARSE_HINT_MAX_FILL = 0.5
+
+
+def _densify(M, dim):
+    """A possibly-sparse operator -> a plain ndarray, or a clear refusal."""
+    if not _sp.issparse(M):
+        return np.asarray(M)
+    need = dim * dim * 16
+    if need > MAX_DENSE_BYTES:
+        raise MemoryError(
+            f"this operator is {dim}x{dim}, which is {need / 1024 ** 3:.1f} GB as a "
+            f"dense array (limit {MAX_DENSE_BYTES / 1024 ** 3:.0f} GB). Nothing is "
+            f"wrong with the model -- the solver keeps it sparse and evolves it "
+            f"fine. It is materializing the whole matrix in one piece that does "
+            f"not fit, so evolve it rather than inspecting H(t) directly.")
+    return M.toarray()
 
 
 class _Term:
@@ -164,6 +198,7 @@ class Model(System):
         self.is_sparse = bool(sparse)  # materialize as scipy CSR (see `sparse()`)
         self._cache = None      # built lazily by _materialize()
         self._cache_key = None  # structure _cache was built from
+        self._hinted = False    # the .sparse() suggestion fires at most once
 
     # ---- composition ----------------------------------------------------
 
@@ -190,11 +225,18 @@ class Model(System):
         """Return this Model flagged to materialize as scipy sparse (CSR).
 
         Same physics, different storage: every embedded term matrix and the
-        static sum become CSR, `hamiltonian(t)` / `jump_operators(t)` return
-        sparse matrices (NOT dense ndarrays), and the evolution classes use
-        sparse matrix-vector products (and `expm_multiply` on the exact
-        piecewise-constant path). Worth it once the joint dimension reaches a
-        few thousand; below that, dense is as fast or faster.
+        static sum become CSR, and the evolution classes use sparse
+        matrix-vector products (and `expm_multiply` on the exact
+        piecewise-constant path). This does NOT change what you get back --
+        `hamiltonian(t)` and `jump_operators(t)` still return plain numpy
+        arrays either way; the CSR stays on the solver side.
+
+        Worth it from a joint dimension of a few hundred up: the measured
+        crossover is ~200 (dense H(t) recopies all dim^2 entries per call
+        regardless of how empty it is, while sparse tracks nnz), giving 5x at
+        dim 256 and 124x at 1024. Below ~200, dense wins on fixed overhead.
+        A dense Model past the threshold says so once; it never switches
+        itself.
 
         The flag is sticky under composition: `H.sparse() + other` is sparse.
         `H.sparse(False)` (or on any composition of sparse models) toggles back
@@ -363,18 +405,42 @@ class Model(System):
                     jump_dynamic.append((term.coeff, mat))
         self._cache = (static, dynamic, jump_static, jump_dynamic)
         self._cache_key = key
+        self._suggest_sparse(static, dynamic)
         return self._cache
 
-    def hamiltonian(self, t):
+    def _suggest_sparse(self, static, dynamic):
+        """Print a one-time note if this dense Model is big enough that
+        `.sparse()` would pay. Advice only -- nothing switches by itself."""
+        if self.is_sparse or self._hinted or self.dim < SPARSE_HINT_DIM:
+            return
+        if not config.VERBOSE:
+            return
+        # The union pattern over static + every dynamic term. Time-independent:
+        # a coefficient f(t) scales a term, it can never create a nonzero where
+        # the term's matrix has a structural zero. Computed once, at most.
+        pattern = np.abs(static)
+        for _, mat in dynamic:
+            pattern = pattern + np.abs(mat)
+        fill = np.count_nonzero(pattern) / float(self.dim * self.dim)
+        self._hinted = True
+        if fill > SPARSE_HINT_MAX_FILL:
+            return
+        print(f"[Model] {self.dim}-dim and {100 * fill:.1f}% filled -- .sparse() "
+              f"would cut H(t) rebuild time here (dense recopies all "
+              f"{self.dim * self.dim:,} entries per call). ht.quiet() silences this.")
+
+    def _h_native(self, t):
+        """H(t) in this Model's native storage -- CSR when sparse-flagged.
+
+        The SOLVER's accessor. Sparse storage is a backend decision: keeping it
+        sparse here is the whole point of the flag, and the evolution classes
+        consume CSR directly (csr @ dense -> dense). Users get `hamiltonian(t)`,
+        which is always a plain array."""
         # `static` is the memoized sum; never hand it out or accumulate into it,
         # or a caller's in-place edit of H(t) would silently corrupt the cache.
         # (Stacking the dynamic terms into one (K,d,d) contraction was measured
         # SLOWER than this loop at realistic sizes -- the cost is in evaluating
         # the K coefficient callables, not in the matrix algebra.)
-        # Sparse models return a scipy CSR matrix, NOT a dense ndarray -- at
-        # the dimensions where sparse is worth toggling on, densifying here
-        # would defeat the point (and can exceed memory outright). Call
-        # `.toarray()` yourself if you really want the dense matrix.
         static, dynamic, _, _ = self._materialize()
         H = static.copy()
         if self.is_sparse:
@@ -385,15 +451,27 @@ class Model(System):
             H += coeff(t) * mat  # in-place into the copy of `static`
         return np.asarray(H)
 
-    def jump_operators(self, t) -> list:
-        """Jump operators at time t: dense ndarrays, or CSR matrices when
-        this Model is flagged sparse (same convention as `hamiltonian`)."""
+    def _jumps_native(self, t) -> list:
+        """Jump operators at time t in native storage. Solver-facing; see
+        `_h_native`."""
         _, _, jump_static, jump_dynamic = self._materialize()
         if self.is_sparse:
             return ([L.copy() for L in jump_static]
                     + [coeff(t) * mat for coeff, mat in jump_dynamic])
         return ([np.asarray(L) for L in jump_static]
                 + [np.asarray(coeff(t) * mat) for coeff, mat in jump_dynamic])
+
+    def hamiltonian(self, t):
+        """H(t) as a plain numpy array -- ALWAYS, sparse-flagged or not.
+
+        Storage is a backend concern: you asked to see the matrix, so you get
+        one you can plot, index and compare without knowing what CSR is. The
+        solver takes the sparse path regardless (see `_h_native`)."""
+        return _densify(self._h_native(t), self.dim)
+
+    def jump_operators(self, t) -> list:
+        """Jump operators L_k(t) as plain numpy arrays (see `hamiltonian`)."""
+        return [_densify(L, self.dim) for L in self._jumps_native(t)]
 
     # ---- inspection ------------------------------------------------------
 
