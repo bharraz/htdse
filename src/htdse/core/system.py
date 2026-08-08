@@ -114,11 +114,6 @@ class System(Protocol):
         return text if len(text) <= 200 else text[:197] + "..."
 
 
-#: Back-compat alias for the pre-rename name. `System` is the current name;
-#: this keeps older notebooks subclassing `ht.Mechanism` working.
-Mechanism = System
-
-
 def provides_unitary(system) -> bool:
     """True if this system actually implements its own .unitary(t)
     (rather than inheriting the not-implemented default)."""

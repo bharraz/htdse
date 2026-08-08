@@ -61,6 +61,3 @@ class TrotterizedSystem(System):
                 f"[{self.t_start:g}, {self.t_stop:g}] / {self.n_steps} steps, "
                 f"sample={self.sample!r})")
 
-
-#: Back-compat alias for the pre-rename name.
-TrotterizedMechanism = TrotterizedSystem
