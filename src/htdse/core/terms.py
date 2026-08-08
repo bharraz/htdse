@@ -35,8 +35,8 @@ only the solver sees the native storage. The flag is sticky under composition.
 
 Worth it from a joint dimension of a few hundred up (measured crossover ~200;
 5x faster at 256, 124x at 1024). Below that, dense wins on fixed overhead.
-Nothing switches by itself -- a Model past the threshold prints a one-time
-suggestion and leaves the decision to you.
+Nothing switches by itself -- a Model past the threshold raises a one-time
+`SparseSuggestion` warning and leaves the decision to you.
 
 Physics caveats the framework cannot check for you:
 - Addition is literal. All terms must be written in the same frame (lab vs.
@@ -53,7 +53,6 @@ from typing import Callable, Union
 import numpy as np
 from scipy import sparse as _sp
 
-from . import config
 from .system import System
 from .subsystems import embed
 
@@ -74,6 +73,12 @@ MAX_DENSE_BYTES = 2 * 1024 ** 3  # 2 GiB
 # matrix gains nothing.
 SPARSE_HINT_DIM = 256
 SPARSE_HINT_MAX_FILL = 0.5
+
+
+class SparseSuggestion(UserWarning):
+    """Raised once by a dense Model large enough that `.sparse()` would pay.
+    Performance advice, never a correctness problem -- silence with
+    `warnings.simplefilter("ignore", SparseSuggestion)`."""
 
 
 def _densify(M, dim):
@@ -409,15 +414,18 @@ class Model(System):
         return self._cache
 
     def _suggest_sparse(self, static, dynamic):
-        """Print a one-time note if this dense Model is big enough that
-        `.sparse()` would pay. Advice only -- nothing switches by itself."""
+        """Warn once if this dense Model is big enough that `.sparse()` would
+        pay. Advice only -- nothing switches by itself.
+
+        A warning rather than a print so it carries a source line (pointing at
+        the code that built the Model) and obeys the usual warning filters.
+        `quiet()` does NOT silence it: it is about your model, not solver
+        chatter. Use `warnings.simplefilter("ignore", SparseSuggestion)`."""
         if self.is_sparse or self._hinted or self.dim < SPARSE_HINT_DIM:
             return
-        if not config.VERBOSE:
-            return
-        # The union pattern over static + every dynamic term. Time-independent:
-        # a coefficient f(t) scales a term, it can never create a nonzero where
-        # the term's matrix has a structural zero. Computed once, at most.
+        # The union pattern over static + every dynamic piece. Time-independent:
+        # a coefficient f(t) scales a piece, it can never create a nonzero where
+        # that piece's matrix has a structural zero. Computed once, at most.
         pattern = np.abs(static)
         for _, mat in dynamic:
             pattern = pattern + np.abs(mat)
@@ -425,9 +433,12 @@ class Model(System):
         self._hinted = True
         if fill > SPARSE_HINT_MAX_FILL:
             return
-        print(f"[Model] {self.dim}-dim and {100 * fill:.1f}% filled -- .sparse() "
-              f"would cut H(t) rebuild time here (dense recopies all "
-              f"{self.dim * self.dim:,} entries per call). ht.quiet() silences this.")
+        warnings.warn(
+            f"this Model is {self.dim}-dim and {100 * fill:.1f}% filled -- "
+            f".sparse() would cut H(t) rebuild time substantially (dense "
+            f"recopies all {self.dim * self.dim:,} entries per call). Storage "
+            f"stays internal either way; hamiltonian(t) returns a plain array.",
+            SparseSuggestion, stacklevel=4)
 
     def _h_native(self, t):
         """H(t) in this Model's native storage -- CSR when sparse-flagged.
