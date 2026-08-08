@@ -22,6 +22,22 @@ def _dense(H) -> np.ndarray:
     return H.toarray() if _sp.issparse(H) else np.asarray(H)
 
 
+def _h_of(system):
+    """The solver's H(t) accessor.
+
+    A Model's PUBLIC `hamiltonian(t)` always densifies, because a user asking
+    to see the matrix wants one they can plot and index. The solver wants the
+    native storage -- keeping a sparse model sparse is the entire point -- so
+    it prefers `_h_native` when the system offers one. A hand-written system
+    has no `_h_native`, and whatever it returns (dense or CSR) is handled."""
+    return getattr(system, "_h_native", system.hamiltonian)
+
+
+def _jumps_of(system):
+    """The solver's jump-operator accessor. See `_h_of`."""
+    return getattr(system, "_jumps_native", system.jump_operators)
+
+
 def _check_hermitian(H, what="H(t0)"):
     """A non-Hermitian generator gives non-unitary dynamics that just looks
     like mysterious decay -- the most common user sign error. Cheap to catch.
@@ -231,7 +247,7 @@ class _ExtendableSolver:
             if self._verbose:
                 print(f"[{self.label}] expm-propagating {self.system!r}: "
                       f"t={t_start:.6g} -> {t_end:.6g} (piecewise-constant H, exact)")
-            H = self.system.hamiltonian((t_start + t_end) / 2)  # constant on interval
+            H = _h_of(self.system)((t_start + t_end) / 2)  # constant on interval
             if _sp.issparse(H):  # sparse system: exponential action, no dense eigh
                 return _ExpmSegment(H, t_start, y_start, self.initial.shape[0])
             return _EighSegment(H, t_start, y_start, self.initial.shape[0])
@@ -314,7 +330,7 @@ def _schrodinger_rhs(system, shape):
     def rhs(t, y_flat):
         # A sparse H is kept sparse -- csr @ dense returns a dense ndarray,
         # which is all the ODE solver ever sees.
-        H = system.hamiltonian(t)
+        H = _h_of(system)(t)
         if not _sp.issparse(H):
             H = np.asarray(H)
         X = y_flat.reshape(shape)
@@ -443,7 +459,7 @@ class HamiltonianEvolution(_Reportable):
                  ladders=None, **solver_kwargs):
         initial = np.asarray(initial)
         _reject_dissipative(system, t0, "HamiltonianEvolution")
-        _check_hermitian(system.hamiltonian(t0))
+        _check_hermitian(_h_of(system)(t0))
         self.system = system
         rhs = _schrodinger_rhs(system, initial.shape)
         self._solver = _ExtendableSolver(rhs, initial, t0, system=system,
@@ -571,7 +587,7 @@ class UnitaryEvolution(_Reportable):
                              f"{np.shape(initial)[0]}) and dim={dim}, which disagree; "
                              f"`initial` wins, so drop `dim` or make them match")
         initial = np.asarray(initial)
-        _check_hermitian(system.hamiltonian(t0))
+        _check_hermitian(_h_of(system)(t0))
         rhs = _schrodinger_rhs(system, initial.shape)
         self._solver = _ExtendableSolver(rhs, initial, t0, system=system,
                                          label="UnitaryEvolution", expm_ok=True,
@@ -581,10 +597,10 @@ class UnitaryEvolution(_Reportable):
         """The propagator U(t) (scalar t) or a stack of them (array t)."""
         if self._analytic:
             if np.ndim(t) == 0:
-                U = np.asarray(self.system.unitary(t))
+                U = _dense(self.system.unitary(t))
             else:
-                U = np.asarray(np.array([np.asarray(self.system.unitary(tt))
-                                       for tt in np.asarray(t)]))
+                U = np.array([_dense(self.system.unitary(tt))
+                              for tt in np.asarray(t)])
         else:
             U = self._solver.state_at(t)
         warn_if_truncated(U, self.subsystems, "unitary",
@@ -664,11 +680,11 @@ def _lindblad_rhs(system, dim):
         # rho stays dense (it is generically full); sparse H / L only speed up
         # the products against it (sparse @ dense and dense @ sparse both
         # return dense ndarrays).
-        H = system.hamiltonian(t)
+        H = _h_of(system)(t)
         if not _sp.issparse(H):
             H = np.asarray(H)
         drho = -1j * (H @ rho - rho @ H)  # coherent part: -i[H, rho]
-        for L in system.jump_operators(t):
+        for L in _jumps_of(system)(t):
             if not _sp.issparse(L):
                 L = np.asarray(L)
             Ld = L.conj().T
@@ -700,7 +716,7 @@ class LindbladEvolution(_Reportable):
                  subsystems: dict | None = None, truncation=None,
                  ladders=None, **solver_kwargs):
         _check_density_matrix(rho0)
-        _check_hermitian(system.hamiltonian(t0))
+        _check_hermitian(_h_of(system)(t0))
         self.system = system
         self.rho0 = np.asarray(rho0)
         self.t0 = t0

@@ -412,13 +412,21 @@ for dims_s, inv in [({"A": 2, "B": 3, "C": 2}, ("A", "C")),
 
 print("== sparse: Model materialization + flag propagation ==")
 Hs = H.sparse()  # the JC model from above
-check("sparse hamiltonian is CSR", sp.issparse(Hs.hamiltonian(0.0)))
+# the PUBLIC accessor always hands back a plain array -- storage is backend
+check("sparse model's public hamiltonian() is a plain ndarray",
+      isinstance(Hs.hamiltonian(0.0), np.ndarray) and not sp.issparse(Hs.hamiltonian(0.0)))
+check("...and it is usable with ordinary numpy",
+      np.allclose(Hs.hamiltonian(0.0), Hs.hamiltonian(0.0).conj().T))
+# the solver's accessor keeps it sparse -- that is the point of the flag
+check("sparse model's native accessor is CSR", sp.issparse(Hs._h_native(0.0)))
+check("native CSR == public dense", np.allclose(Hs._h_native(0.0).toarray(),
+                                                Hs.hamiltonian(0.0)))
 check("sparse H(t) == dense H(t)",
-      np.allclose(Hs.hamiltonian(0.0).toarray(), np.asarray(H.hamiltonian(0.0))))
+      np.allclose(Hs.hamiltonian(0.0), H.hamiltonian(0.0)))
 Hs_td = (H + term(sigma_x, on="spin", coeff=lambda t: np.cos(0.7 * t), name="dr")).sparse()
 H_td = H + term(sigma_x, on="spin", coeff=lambda t: np.cos(0.7 * t), name="dr")
 check("sparse time-dependent H(t) == dense",
-      all(np.allclose(Hs_td.hamiltonian(tt).toarray(), np.asarray(H_td.hamiltonian(tt)))
+      all(np.allclose(Hs_td.hamiltonian(tt), H_td.hamiltonian(tt))
           for tt in [0.0, 0.3, 1.7]))
 
 check("sparse flag sticky under +", (Hs + term(nop, on="mode")).is_sparse)
@@ -436,9 +444,63 @@ check("repr shows sparse", "sparse" in repr(Hs))
 
 open_s = open_model.sparse()
 Ls_sparse = open_s.jump_operators(0.0)
-check("sparse jump_operators are CSR and match dense",
-      all(sp.issparse(L) for L in Ls_sparse)
-      and np.allclose(Ls_sparse[0].toarray(), np.asarray(Ls[0])))
+check("sparse jump_operators come back dense from the public accessor",
+      all(isinstance(L, np.ndarray) and not sp.issparse(L) for L in Ls_sparse)
+      and np.allclose(Ls_sparse[0], Ls[0]))
+check("sparse jump_operators stay CSR on the native accessor",
+      all(sp.issparse(L) for L in open_s._jumps_native(0.0)))
+
+print("== sparse: suggestion, size guard, sparse unitaries ==")
+# a big, empty, DENSE model should suggest .sparse() -- once, and never switch
+big = (term(np.diag(np.arange(400.0)).astype(complex), on="big", name="d")
+       + term(np.eye(400, k=1, dtype=complex), on="big", coeff=lambda t: np.sin(t),
+              name="off"))
+buf = io.StringIO()
+with redirect_stdout(buf):
+    big.hamiltonian(0.0)
+    big.hamiltonian(0.5)  # second call must not re-print
+out = buf.getvalue()
+check("big dense model suggests .sparse()", ".sparse()" in out and "400-dim" in out)
+check("the suggestion fires exactly once", out.count(".sparse()") == 1)
+check("suggesting does NOT switch storage", not big.is_sparse
+      and isinstance(big.hamiltonian(0.0), np.ndarray))
+buf2 = io.StringIO()
+with redirect_stdout(buf2):
+    with quiet():
+        (big + term(np.eye(400, dtype=complex), on="big", name="x")).hamiltonian(0.0)
+check("quiet() silences the suggestion", ".sparse()" not in buf2.getvalue())
+buf3 = io.StringIO()
+with redirect_stdout(buf3):
+    (2.0 * atom).hamiltonian(0.0)  # 2-dim: far below the threshold
+check("small models say nothing", ".sparse()" not in buf3.getvalue())
+
+# densifying something enormous refuses with a number instead of dying
+from htdse.core.terms import _densify, MAX_DENSE_BYTES
+try:
+    _densify(sp.csr_matrix((4, 4), dtype=complex), 400_000)
+    check("densify guard raises on an impossible matrix", False)
+except MemoryError as e:
+    check("densify guard raises on an impossible matrix",
+          "400000x400000" in str(e) and "GB" in str(e))
+
+# a System returning a SPARSE unitary used to explode with an AxisError
+class SparseGate(System):
+    def __init__(self):
+        self.subsystems = {"q0": 2, "q1": 2}
+        p = np.arange(4); p[-2:] = p[-2:][::-1]
+        self._U = sp.csr_matrix((np.ones(4), (np.arange(4), p)), shape=(4, 4), dtype=complex)
+    def unitary(self, t=None):
+        return self._U
+with quiet():
+    _sg = UnitaryEvolution(SparseGate(), dim=4)
+    _Usg = _sg.unitary_at(1.0)
+    _Usg_arr = _sg.unitary_at(np.array([0.0, 1.0]))
+check("sparse unitary is accepted and densified",
+      isinstance(_Usg, np.ndarray) and _Usg.shape == (4, 4)
+      and np.allclose(_Usg @ _Usg.conj().T, np.eye(4)))
+check("sparse unitary works batched over t", _Usg_arr.shape == (2, 4, 4))
+check("sparse unitary reports a clean unitarity defect",
+      _sg.unitarity_defect(1.0) < 1e-12)
 
 print("== sparse: evolutions match dense ==")
 with quiet():
