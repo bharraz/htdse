@@ -178,6 +178,7 @@ system mutated after binding. Population reaching the top of a truncated ladder 
 | Worked examples, increasing complexity | [demos/](demos/) |
 | To use QuTiP for part of the job | `htdse.interop.qutip` — [GUIDE.md](GUIDE.md#talking-to-qutip) |
 | What a function does exactly | its docstring — written as the reference manual |
+| To update code written against an older version | [MIGRATION.md](MIGRATION.md) |
 
 **Package layout**
 
