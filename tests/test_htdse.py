@@ -16,7 +16,8 @@ import htdse as ht
 from htdse import (System, Model, term, jump, plus_hc,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, embed, partial_trace, compare_over,
-                   otimes, ket, fidelity, process_fidelity, density_fidelity, quiet, dag)
+                   otimes, ket, fidelity, process_fidelity, density_fidelity, quiet, dag,
+                   SparseSuggestion)
 from htdse.core.plotting import plot_populations
 from htdse.submodules.spin import (sigma_x, sigma_y, sigma_z, I2, sigma_plus,
                                    sigma_minus, pauli_term, pauli_sum)
@@ -455,24 +456,29 @@ print("== sparse: suggestion, size guard, sparse unitaries ==")
 big = (term(np.diag(np.arange(400.0)).astype(complex), on="big", name="d")
        + term(np.eye(400, k=1, dtype=complex), on="big", coeff=lambda t: np.sin(t),
               name="off"))
-buf = io.StringIO()
-with redirect_stdout(buf):
+with warnings.catch_warnings(record=True) as wl:
+    warnings.simplefilter("always")
     big.hamiltonian(0.0)
-    big.hamiltonian(0.5)  # second call must not re-print
-out = buf.getvalue()
-check("big dense model suggests .sparse()", ".sparse()" in out and "400-dim" in out)
-check("the suggestion fires exactly once", out.count(".sparse()") == 1)
+    big.hamiltonian(0.5)  # second call must not re-warn
+hits = [w for w in wl if issubclass(w.category, SparseSuggestion)]
+check("big dense model suggests .sparse()",
+      len(hits) == 1 and "400-dim" in str(hits[0].message)
+      and ".sparse()" in str(hits[0].message))
+check("the suggestion is a SparseSuggestion warning",
+      issubclass(hits[0].category, UserWarning))
 check("suggesting does NOT switch storage", not big.is_sparse
       and isinstance(big.hamiltonian(0.0), np.ndarray))
-buf2 = io.StringIO()
-with redirect_stdout(buf2):
-    with quiet():
-        (big + term(np.eye(400, dtype=complex), on="big", name="x")).hamiltonian(0.0)
-check("quiet() silences the suggestion", ".sparse()" not in buf2.getvalue())
-buf3 = io.StringIO()
-with redirect_stdout(buf3):
-    (2.0 * atom).hamiltonian(0.0)  # 2-dim: far below the threshold
-check("small models say nothing", ".sparse()" not in buf3.getvalue())
+with warnings.catch_warnings(record=True) as wl2:
+    warnings.simplefilter("ignore", SparseSuggestion)
+    (big + term(np.eye(400, dtype=complex), on="big", name="x")).hamiltonian(0.0)
+check("the suggestion is filterable",
+      not [w for w in wl2 if issubclass(w.category, SparseSuggestion)])
+with warnings.catch_warnings(record=True) as wl3:
+    warnings.simplefilter("always")
+    (2.0 * atom).hamiltonian(0.0)   # 2-dim: far below the threshold
+    Hs.hamiltonian(0.0)             # already sparse: nothing to suggest
+check("small and already-sparse models say nothing",
+      not [w for w in wl3 if issubclass(w.category, SparseSuggestion)])
 
 # densifying something enormous refuses with a number instead of dying
 from htdse.core.terms import _densify, MAX_DENSE_BYTES
