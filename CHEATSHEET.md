@@ -34,6 +34,11 @@ H = (ht.term(0.5 * w0 * sigma_z, on="spin", name="atom")
 - `coeff` is a number or `f(t)`.
 - `name=` is the swap handle: `H.replace(atom=other)`.
 - `ht.plus_hc(X)` = `X + X.dag()` — the `g s+ a + h.c.` idiom in one call.
+- `ht.hc(X)` = `X.dag()` — JUST the conjugate, as a free function next to `plus_hc`
+  instead of a method you have to already know about.
+- `ht.show(H, t=0)` — print `H(t)` readably: a Pauli-coefficient table when
+  `dim = 2^n`, else the rounded matrix. No more materializing and formatting
+  a raw ndarray by hand just to sanity-check what you built.
 - `ht.jump(L, on=..., coeff=np.sqrt(gamma), name=...)` — a Lindblad channel, composes
   the same way (`+`), lives in `.jumps` instead of `.groups`.
 
@@ -77,6 +82,8 @@ from htdse.submodules.molmer_sorensen import ms_tones, ms_closed_form, ideal_gat
 tones = ms_tones(nu, delta, Omega, theta=0.0, psi=0.0)
 H_rwa = driven_spins(tones, ["q0", "q1"], [mode], lamb_dicke=1, rwa=True)   # ODE-solved
 target = ideal_gate(n_ions=2, eta=0.1, delta=0.5, Omega=Omega, n_max=8)     # closed form, no ODE
+
+tones_asym = ms_tones(nu, delta, Omega, delta_red=0.65, amp_red=0.9*Omega)  # asymmetric bichromatic drive
 ```
 
 ### Physics that isn't a sum of terms — write a `System`
@@ -144,6 +151,41 @@ H.without("carrier_q0")                       # drop a group
 H.sparse()                                    # flag for CSR storage (dim gtr~200: worth it)
 ```
 
+## Reading amplitudes and populations
+
+$$ \langle 00|\psi\rangle $$
+
+```python
+ht.bra("00") @ psi        # amplitude <00|psi> -- no .conj()/.T at the call site
+abs(ht.bra("00") @ psi)**2   # population
+```
+
+## Reading a solved gate — what did it actually implement?
+
+For a state trajectory, `plot_populations`/`bra` above are enough. For a
+**propagator/gate** (from `UnitaryEvolution` or a closed form), the question
+is usually "what effective Hamiltonian did this implement on the part I
+care about, given the rest (e.g. a motional mode) returns to where it
+started?" These compose in one direction, each a plain function of the last:
+
+```python
+M = ht.project(U, H.subsystems, on="mode", state=0)   # <0|_mode U |0>_mode
+c = ht.closure(M)                  # 1.0 = motion actually returned; check before trusting M
+H_eff = ht.generator(M, T)         # M ~= exp(-i H_eff T), via logm; Hermitian, traceless
+ht.paulis(H_eff)                   # {"XX": ..., "ZI": ...} -- same as pauli_decompose
+ht.max_eigenphase(H_eff, T)        # logm branch-cut trust check; want << 1
+```
+
+`generator`'s `logm` picks a principal branch per eigenvalue, so once the
+gate's eigenphases spread past ~π the extraction wraps and the Pauli
+coefficients stop meaning anything — `max_eigenphase` is the number to check
+before reading `paulis`, not a certificate that the answer is right.
+
+`magnus`/`magnus_pauli` do a related but different job: perturbative, from
+`H(t)` directly, and qubit-only (`dim = 2^n`). This pipeline is the
+non-perturbative, post-solve counterpart — it works from the *propagator*,
+so it's what you reach for when the system carries a mode.
+
 ## Comparing target vs. realized
 
 ```python
@@ -168,11 +210,16 @@ n_max = ht.converged(lambda n: run_with(n_max=n), values=[6, 8, 10, 12],
 ## Plotting
 
 ```python
-from htdse.core.plotting import plot_populations, plot_eigenspectrum
+from htdse.core.plotting import plot_populations, plot_eigenspectrum, plot_matrix
 
 plot_populations(ts, ev)                 # or a ket/rho trajectory directly
 plot_eigenspectrum(ev, ts)               # instantaneous H(t) eigenvalues
+plot_matrix(H, t=0, kind="abs")          # heatmap: "abs" (default) / "real" / "imag" / "phase"
 ```
+
+All four (`plot_populations`, `plot_eigenspectrum`, `plot_matrix`, plus `bra`/
+`show`/`project`/`closure`/`generator`/`paulis`/`max_eigenphase` above) are
+also importable straight from `htdse` — `ht.plot_matrix(...)`, no submodule path.
 
 Phase-space (Mølmer–Sørensen / any spin-dependent force):
 
