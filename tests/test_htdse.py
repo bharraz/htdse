@@ -683,7 +683,7 @@ try:
 except ImportError:
     print("  -- qutip not installed, skipping (it is not an htdse dependency)")
 else:
-    from htdse.interop.qutip import to_qobj, from_qobj, to_qutip, as_mechanism
+    from htdse.interop.qutip import to_qobj, from_qobj, to_qutip, as_system
     _n = 8
     _a, _nop = annihilation(_n), number_operator(_n)
     _H = (term(0.65 * sigma_z, on="spin", name="atom") + term(1.3 * _nop, on="mode", name="mode")
@@ -737,19 +737,19 @@ else:
     # must dispatch on QobjEvo, not on callable().
     _Hq0 = _qt.Qobj(np.asarray(_H.hamiltonian(0.0)), dims=[[2, _n + 1]] * 2)
     with quiet():
-        _pm = HamiltonianEvolution(as_mechanism(_Hq0, subsystems=_H.subsystems),
+        _pm = HamiltonianEvolution(as_system(_Hq0, subsystems=_H.subsystems),
                                    _psi0).state_at(_ts)
-    check("as_mechanism(Qobj) evolves in htdse",
+    check("as_system(Qobj) evolves in htdse",
           np.max(np.abs(np.abs(_pm @ _psi0.conj()) ** 2 - _ref)) < 1e-9)
     with quiet():
-        _pe = HamiltonianEvolution(as_mechanism(_qt.QobjEvo([_Hq0]), subsystems=_H.subsystems),
+        _pe = HamiltonianEvolution(as_system(_qt.QobjEvo([_Hq0]), subsystems=_H.subsystems),
                                    _psi0).state_at(_ts)
-    check("as_mechanism(QobjEvo) evolves in htdse",
+    check("as_system(QobjEvo) evolves in htdse",
           np.max(np.abs(np.abs(_pe @ _psi0.conj()) ** 2 - _ref)) < 1e-9)
 
     # and htdse's own guards still apply to a qutip-sourced system
     _Lq = _qt.Qobj(np.sqrt(0.3) * np.kron(I2, _a), dims=[[2, _n + 1]] * 2)
-    _md = as_mechanism(_Hq0, subsystems=_H.subsystems, jumps=[_Lq])
+    _md = as_system(_Hq0, subsystems=_H.subsystems, jumps=[_Lq])
     try:
         HamiltonianEvolution(_md, _psi0)
         check("closed solver still refuses a dissipative qutip system", False)

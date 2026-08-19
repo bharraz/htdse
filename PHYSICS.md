@@ -332,7 +332,7 @@ quasiprobability $W(x,p)$ of a Fock-basis ket or reduced ρ — `trace_out` the 
 negativity of $W$ as the visible signature of nonclassicality.)
 
 `ms_closed_form` implements `.unitary(t)` only (it *is* a gate — section 2's dual primitive),
-built as a factory FUNCTION (same convention as `interop.qutip.as_mechanism`) rather than a
+built as a factory FUNCTION (same convention as `interop.qutip.as_system`) rather than a
 class the caller instantiates, and its integrals are dense-grid quadrature
 (`points_per_period`). Two honesty guards: constant phases required (time-dependent $\phi_j$
 breaks the commutator structure that terminated the series — use `driven_spins(...,

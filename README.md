@@ -75,7 +75,7 @@ flowchart TB
     MODEL["<b>Model</b> — the convenient path<br/>
     named groups of terms over a registry of subsystems, both dicts keyed by label.<br/>Group labels replace/retrieve/remove physics; subsystem labels fix the embedding order.<br/>Not a matrix — it builds H(t) on demand<br/><i>built by term() / jump() / pauli_sum() / driven_spins() ...</i>"]
 
-    OWN["<b>your own class</b> — the general path for physics that isn't a sum of terms:<br/>a closed-form gate, a wrapper, a bridge<br/><i>ms_closed_form, TrotterizedSystem, as_mechanism(Qobj)</i>"]
+    OWN["<b>your own class</b> — the general path for physics that isn't a sum of terms:<br/>a closed-form gate, a wrapper, a bridge<br/><i>ms_closed_form, TrotterizedSystem, as_system(Qobj)</i>"]
 
     SYS["<b>System</b> - a Protocol <br/>hamiltonian(t) and/or unitary(t), plus optional jump_operators(t)<br/>"]
 
@@ -119,7 +119,7 @@ Two ways to build a System:
 | Your physics is… | You write… | Examples in the package |
 |---|---|---|
 | a sum of named pieces | **a `Model`** | `driven_spins`, `jaynes_cummings`, `pauli_sum`, `term`, `jump` |
-| a closed-form `U(t)`, or a wrapper | **a class satisfying `System`** | `ms_closed_form`, `TrotterizedSystem`, `as_mechanism` |
+| a closed-form `U(t)`, or a wrapper | **a class satisfying `System`** | `ms_closed_form`, `TrotterizedSystem`, `as_system` |
 
 A common pattern for using `Model` would be something like: 
 

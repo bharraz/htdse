@@ -20,9 +20,9 @@ Two ways to build one, and the common case is not the object-oriented one:
 
   2. A class implementing this protocol -- for physics that is NOT a sum of
      terms: a closed-form gate (`ms_closed_form`), a wrapper
-     (`TrotterizedSystem`), a bridge (`interop.qutip.as_mechanism`). Note this
+     (`TrotterizedSystem`), a bridge (`interop.qutip.as_system`). Note this
      doesn't mean the caller writes `class Foo`: `ms_closed_form` and
-     `as_mechanism` are both lowercase factory FUNCTIONS that build a small
+     `as_system` are both lowercase factory FUNCTIONS that build a small
      private class internally and hand back an instance -- the class is an
      implementation detail, never something you type at the call site.
 

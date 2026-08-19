@@ -91,6 +91,13 @@ def _mode_list(modes, participation, eta, detune, n_max, mode_name) -> list:
         modes = list(modes)
         if not modes:
             raise ValueError("`modes=` is empty: an MS drive needs at least one mode")
+        for md in modes:
+            if not hasattr(md, "detune"):
+                raise TypeError(
+                    f"{md!r} has no `detune` -- this looks like a "
+                    "`spin_boson.Mode` (nu, eta, n_max), which is for "
+                    "`driven_spins`. `ms_closed_form` needs "
+                    "`MSMode(eta, detune, n_max)` (detuning directly, no `nu`).")
         n_ions = len(np.atleast_1d(modes[0].eta)) if not np.isscalar(modes[0].eta) else 1
         out = [_norm_mode(md, n_ions) for md in modes]
     else:
@@ -157,7 +164,7 @@ def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
     `DensityMatrixEvolution` consume it directly with no ODE solve.
 
     Built as a factory FUNCTION (same convention as
-    `interop.qutip.as_mechanism`), not a class the caller instantiates: the
+    `interop.qutip.as_system`), not a class the caller instantiates: the
     physics is not object-oriented, so nothing here is.
 
     Restrictions inherent to the closed form: `phases` must be CONSTANT per

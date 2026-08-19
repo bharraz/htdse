@@ -239,14 +239,14 @@ fidelity. See `06_what_is_my_pulse_generating.ipynb`.
 you call this.
 
 ```python
-from htdse.interop.qutip import to_qutip, to_qobj, as_mechanism
+from htdse.interop.qutip import to_qutip, to_qobj, as_system
 
 H_q, c_ops = to_qutip(model)        # qutip's native [H0, [H1, f1]] form (its fast path)
 qutip.mcsolve(H_q, to_qobj(psi0, model.subsystems), ts, c_ops)
 ```
 
 Compose here, solve there for what htdse does not implement: `mcsolve`, `steadystate`,
-`floquet`. The reverse works too — `as_mechanism(qobj)` wraps a QuTiP object so htdse's
+`floquet`. The reverse works too — `as_system(qobj)` wraps a QuTiP object so htdse's
 evolutions and guards consume it, and qutip's measures take htdse output through `to_qobj`.
 
 htdse's registry is *ordered*, qutip's `dims` is *positional*, and they must agree.

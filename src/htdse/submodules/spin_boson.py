@@ -321,6 +321,13 @@ def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None) -> M
            names; kept only for parity with callers that used to pass a count.
     modes: list of `Mode`.
     """
+    for md in modes:
+        if not hasattr(md, "nu"):
+            raise TypeError(
+                f"{md!r} has no `nu` -- this looks like a "
+                "`molmer_sorensen.MSMode` (eta, detune, n_max), which is only "
+                "for `ms_closed_form` (parametrized by detuning directly). "
+                "`driven_spins` needs `spin_boson.Mode(nu, eta, n_max)`.")
     if lamb_dicke is None:
         return exact_drive(tones, spins, modes)
     if lamb_dicke not in (1, 2):

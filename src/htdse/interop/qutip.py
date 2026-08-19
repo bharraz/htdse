@@ -126,7 +126,7 @@ def to_qutip(model, include_jumps=True):
     return H, c_ops
 
 
-def as_mechanism(source, subsystems=None, jumps=None):
+def as_system(source, subsystems=None, jumps=None):
     """A qutip `Qobj` / `QobjEvo` -> an htdse `System`, so the htdse evolution
     classes (and their guards, and `compare_over`) can consume it.
 
