@@ -200,4 +200,32 @@ alpha_2 = gate.alpha_trajectory(np.linspace(0, T, 60))[:, 0, 0] * 2
 check("<a> on +branch follows sum of closed-form alphas",
       np.max(np.abs(a_meas - alpha_2)) < 1e-3)
 
+print("== ergonomics helpers ==")
+from htdse.submodules.spin_boson import explain, TONE_TABLE
+from htdse.submodules.molmer_sorensen import ideal_gate
+
+mp = Mode.from_participation(nu=nu, eta=eta, b=b, n_max=n_max, name="mode")
+check("Mode.from_participation matches manual eta*b",
+      np.allclose(mp.eta, eta * np.array(b)) and mp.nu == nu and mp.name == "mode")
+
+ex = driven_spins([Tone(0.0)], ["q0"], [mode1q], lamb_dicke=None)
+try:
+    ex + ex
+    check("exact_drive '+' raises a clear error", False)
+except TypeError as e:
+    check("exact_drive '+' raises a clear error", "sigma_+" in str(e))
+try:
+    ex.replace(x=1)
+    check("exact_drive .replace() raises a clear error", False)
+except AttributeError as e:
+    check("exact_drive .replace() raises a clear error", "replace" in str(e))
+
+g_ideal = ideal_gate(2, eta, delta, Omega, n_max)
+g_manual = ms_closed_form([1.0, 1.0], eta, delta, Omega, [0.0, 0.0], n_max)
+check("ideal_gate == ms_closed_form with explicit defaults",
+      np.allclose(np.asarray(g_ideal.unitary(0.3 * T)), np.asarray(g_manual.unitary(0.3 * T))))
+
+check("explain() runs and TONE_TABLE is non-empty", len(TONE_TABLE) > 0)
+explain()
+
 print(f"\nALL {len(PASS)} SPIN-BOSON/MS CHECKS PASSED")

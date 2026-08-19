@@ -117,26 +117,24 @@ def ms_tones(nu, delta, amp, theta=0.0, psi=0.0):
     phi_red = theta-psi are what gets derived, not the other way around."""
     mu = nu + delta
 
-    def as_list(x):
-        return list(x) if isinstance(x, (list, tuple)) else [x]
+    def add(a, b, sign):
+        """a + sign*b, staying a plain number when both are, else a callable."""
+        if callable(a) or callable(b):
+            af = a if callable(a) else (lambda t: a)
+            bf = b if callable(b) else (lambda t: b)
+            return lambda t, af=af, bf=bf, sign=sign: af(t) + sign * bf(t)
+        return a + sign * b
 
     def combine(sign):
-        th_list, ps_list = as_list(theta), as_list(psi)
-        any_callable = any(callable(x) for x in th_list + ps_list)
-        if not any_callable and len(th_list) == 1 and len(ps_list) == 1:
-            return th_list[0] + sign * ps_list[0]
-        n = max(len(th_list), len(ps_list))
-        th_list = th_list * n if len(th_list) == 1 else th_list
-        ps_list = ps_list * n if len(ps_list) == 1 else ps_list
-        out = []
-        for th_i, ps_i in zip(th_list, ps_list):
-            if callable(th_i) or callable(ps_i):
-                thf = th_i if callable(th_i) else (lambda t, v=th_i: v)
-                psf = ps_i if callable(ps_i) else (lambda t, v=ps_i: v)
-                out.append(lambda t, thf=thf, psf=psf, sign=sign: thf(t) + sign * psf(t))
-            else:
-                out.append(th_i + sign * ps_i)
-        return out
+        is_list = isinstance(theta, (list, tuple)) or isinstance(psi, (list, tuple))
+        if not is_list:
+            return add(theta, psi, sign)          # one shared value for every ion
+        th = list(theta) if isinstance(theta, (list, tuple)) else [theta]
+        ps = list(psi) if isinstance(psi, (list, tuple)) else [psi]
+        n = max(len(th), len(ps))
+        th = th * n if len(th) == 1 else th
+        ps = ps * n if len(ps) == 1 else ps
+        return [add(th[i], ps[i], sign) for i in range(n)]
 
     return [Tone(offset=mu, amp=amp, phase=combine(+1)),
             Tone(offset=-mu, amp=amp, phase=combine(-1))]
@@ -295,6 +293,22 @@ def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
                    f"phases={phase_consts})")
 
     return _MSGate()
+
+
+def ideal_gate(n_ions, eta, delta, Omega, n_max, participation=None) -> System:
+    """The common case, in one call: an ideal (constant amplitude, zero spin
+    phase) symmetric two-tone MS gate on `n_ions` ions, one mode -- the
+    closed-form gate to reach for FIRST, before composing tones/modes by hand
+    for a specific error study.
+
+    participation: per-ion coupling weight b_j (default: 1 for every ion --
+    pass a normalized array, e.g. [1,1]/sqrt(2) for two ions, for a physical
+    COM-mode calibration).
+
+    Equivalent to `ms_closed_form(participation, eta, delta, Omega, [0.0]*n_ions, n_max)`."""
+    if participation is None:
+        participation = [1.0] * n_ions
+    return ms_closed_form(participation, eta, delta, Omega, [0.0] * n_ions, n_max)
 
 
 # ---------------------------------------------------------------------------

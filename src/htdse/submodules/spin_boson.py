@@ -71,6 +71,39 @@ from .harmonic_oscillator import annihilation, number_operator
 from .spin import sigma_x, sigma_y, sigma_plus
 
 
+TONE_TABLE = """\
+One spin, one tone, after RWA (lamb_dicke=1, rwa=True):
+
+    tone offset          result                              name
+    -------------------  ----------------------------------  ---------------------------
+    0                    (Omega/2) sigma_phi                 carrier, no motional content
+    -nu                  g(sigma_+ a + h.c.), g=i*eta*Om/2    red sideband = Jaynes-Cummings
+    +nu                  g(sigma_+ a^dag + h.c.)              blue sideband = anti-JC
+    +-(nu+delta), 2 tones  sigma_Phi (x) (f a^dag + f* a)     Molmer-Sorensen force
+
+MS is red-sideband JC plus blue-sideband anti-JC of a second tone: not a
+primitive, a superposition of two rows above.
+
+The i in the JC bridge is not a bug: the Lamb-Dicke expansion of e^{i eta X}
+starts 1 + i eta X + ..., so recoil coupling carries an intrinsic quarter-turn
+spin phase relative to a dipole coupling written directly as g(s+ a + h.c.)
+(jaynes_cummings/rabi -- no eta, never derived from this table).
+
+lamb_dicke x rwa, the full ladder:
+
+                    rwa=False (pre-RWA)              rwa=True
+    lamb_dicke=None full e^{i eta X(t)}, exact        --
+    lamb_dicke=1    keep O(eta^1)                     resonant term only (table above)
+    lamb_dicke=2    keep O(eta^1) + O(eta^2)           -- (eta^2 has no resonant piece)
+"""
+
+
+def explain():
+    """Print the tone table and approximation ladder -- what to pass
+    `driven_spins` for and what you get back, without opening source."""
+    print(TONE_TABLE)
+
+
 class Tone(NamedTuple):
     """One drive tone: amplitude Om(t) at SIGNED offset `offset` = w_laser -
     w_0 from the spin's resonance, optical phase `phase`.
@@ -95,6 +128,14 @@ class Mode(NamedTuple):
     eta: object
     n_max: int
     name: str = "mode"
+
+    @classmethod
+    def from_participation(cls, nu, eta, b, n_max, name="mode"):
+        """`Mode(nu, eta=eta*b, n_max, name)` -- the arithmetic every caller
+        otherwise repeats at the call site. `eta`: the bare Lamb-Dicke
+        parameter (one number). `b`: per-spin participation (e.g. COM mode
+        of two ions is `[1, 1]/sqrt(2)`) -- scalar or array."""
+        return cls(nu=nu, eta=eta * np.asarray(b, dtype=float), n_max=n_max, name=name)
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +418,21 @@ def exact_drive(tones, spins, modes) -> System:
 
         def __repr__(self):
             return f"exact_drive({len(tones)} tone(s), spins={spins}, modes={[md.name for md in modes]})"
+
+        def __add__(self, other):
+            raise TypeError(
+                "exact_drive(...) (lamb_dicke=None) has no '+': sigma_+ (x) D(t) is a "
+                "genuinely t-dependent matrix, not a sum of scalar-coefficient x "
+                "fixed-operator terms, so there is nothing for '+' to compose. Sum "
+                "the Hamiltonians yourself inside a System subclass, or work at "
+                "lamb_dicke=1/2 where the physics IS a sum of terms.")
+
+        def replace(self, **kwargs):
+            raise AttributeError(
+                "exact_drive(...) (lamb_dicke=None) has no .replace(): that's a "
+                "Model operation on named term groups, and this rung has none (see "
+                "the '+' error for why). Build a new exact_drive(...) with the "
+                "changed tones/modes instead.")
 
     return _ExactDrive()
 
