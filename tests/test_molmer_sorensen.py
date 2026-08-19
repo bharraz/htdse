@@ -152,6 +152,30 @@ for n_level in [0, 2]:
     check(f"carrier Rabi freq n={n_level} matches Om*e^-eta^2/2*L_n(eta^2) (rel err {err:.1e})",
           err < 1e-3)
 
+print("== asymmetric tones: ms_tones(delta_red=, amp_red=) ==")
+delta_red = 0.65
+tones_sym_explicit = ms_tones(nu, delta, Omega, theta=[0.0, 0.0], delta_red=delta)
+H_sym = driven_spins(ms_tones(nu, delta, Omega, theta=[0.0, 0.0]), ["q0", "q1"], [mode], lamb_dicke=1)
+H_sym_explicit = driven_spins(tones_sym_explicit, ["q0", "q1"], [mode], lamb_dicke=1)
+for tt in [0.0, 0.4, 1.1]:
+    check(f"delta_red=delta reduces exactly to the symmetric drive, t={tt}",
+          np.allclose(np.asarray(H_sym.hamiltonian(tt)),
+                      np.asarray(H_sym_explicit.hamiltonian(tt)), atol=1e-10))
+
+tones_asym = ms_tones(nu, delta, Omega, theta=[0.0, 0.0], delta_red=delta_red)
+H_asym = driven_spins(tones_asym, ["q0", "q1"], [mode], lamb_dicke=1)
+H_asym_t = np.asarray(H_asym.hamiltonian(0.3))
+check("genuinely asymmetric drive stays Hermitian",
+      np.allclose(H_asym_t, H_asym_t.conj().T, atol=1e-10))
+check("genuinely asymmetric drive differs from the symmetric one",
+      not np.allclose(H_asym_t, np.asarray(H_sym.hamiltonian(0.3)), atol=1e-6))
+
+tones_amp_asym = ms_tones(nu, delta, Omega, theta=[0.0, 0.0], amp_red=Omega * 1.5)
+H_amp_asym = driven_spins(tones_amp_asym, ["q0", "q1"], [mode], lamb_dicke=1)
+H_amp_t = np.asarray(H_amp_asym.hamiltonian(0.3))
+check("amp_red alone stays Hermitian",
+      np.allclose(H_amp_t, H_amp_t.conj().T, atol=1e-10))
+
 print("== negative amplitude == individual-beam pi phase flip (pinned regression) ==")
 tones_neg = ms_tones(nu, delta, -0.8, theta=0.0, psi=0.0)
 tones_flip = ms_tones(nu, delta, 0.8, theta=np.pi, psi=0.0)

@@ -13,12 +13,12 @@ import matplotlib
 matplotlib.use("Agg")
 
 import htdse as ht
-from htdse import (System, Model, term, jump, plus_hc,
+from htdse import (System, Model, term, jump, plus_hc, hc,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, embed, partial_trace, compare_over,
-                   otimes, ket, fidelity, process_fidelity, density_fidelity, quiet, dag,
-                   SparseSuggestion)
-from htdse.core.plotting import plot_populations
+                   otimes, ket, bra, fidelity, process_fidelity, density_fidelity, quiet, dag,
+                   SparseSuggestion, show, project, closure, generator, paulis, max_eigenphase)
+from htdse.core.plotting import plot_populations, plot_matrix
 from htdse.submodules.spin import (sigma_x, sigma_y, sigma_z, I2, sigma_plus,
                                    sigma_minus, pauli_term, pauli_sum)
 from htdse.submodules.harmonic_oscillator import (annihilation, creation,
@@ -755,5 +755,54 @@ else:
         check("closed solver still refuses a dissipative qutip system", False)
     except ValueError:
         check("closed solver still refuses a dissipative qutip system", True)
+
+print("== bra, hc, show, plot_matrix ==")
+_psi00 = otimes(ket("0"), ket("0"))
+check("bra('00') @ psi == <00|psi>", bra("00") @ _psi00 == 1.0 + 0j)
+check("bra('01') @ psi == 0", bra("01") @ _psi00 == 0j)
+
+_jc_term = term({"spin": sigma_plus, "mode": creation(6).conj().T}, coeff=0.1, name="jc")
+_h1 = _jc_term + hc(_jc_term)
+_h2 = plus_hc(_jc_term)
+check("hc(h) is just h.dag(): h + hc(h) == plus_hc(h)",
+      np.allclose(np.asarray(_h1.hamiltonian(0)), np.asarray(_h2.hamiltonian(0))))
+
+with redirect_stdout(io.StringIO()) as _buf:
+    show(term(0.5 * sigma_z, on="q") + term(0.3 * sigma_x, on="q"))
+check("show() on a qubit-only Model prints the Pauli table", "Z" in _buf.getvalue())
+with redirect_stdout(io.StringIO()) as _buf2:
+    show(np.diag([1.0, 2.0]).astype(complex))
+check("show() on a non-2^n array falls back to the matrix", "2x2" in _buf2.getvalue())
+
+_ax = plot_matrix(term(0.5 * sigma_x, on="q").hamiltonian(0), kind="abs")
+check("plot_matrix runs (abs)", _ax is not None)
+_ax2 = plot_matrix(term(0.5 * sigma_x, on="q"), kind="phase")
+check("plot_matrix runs on a Model directly (phase)", _ax2 is not None)
+
+print("== READ layer: project, closure, generator, paulis, max_eigenphase ==")
+from htdse.submodules.molmer_sorensen import ideal_gate
+_eta, _delta, _Omega, _n_max = 0.1, 0.5, 0.8, 8
+_gate = ideal_gate(2, eta=_eta, delta=_delta, Omega=_Omega, n_max=_n_max)
+_T = 2 * np.pi / _delta
+_U = np.asarray(_gate.unitary(_T))
+_M = project(_U, _gate.subsystems, on="mode", state=0)
+check("project reduces a joint propagator to the spin-only block",
+      _M.shape == (4, 4))
+check("closure == 1.0 for an ideal loop-closed gate", abs(closure(_M) - 1.0) < 1e-8)
+_H_eff = generator(_M, _T)
+check("generator's H_eff is Hermitian", np.allclose(_H_eff, _H_eff.conj().T, atol=1e-10))
+check("generator's H_eff is traceless (global phase dropped)",
+      abs(np.trace(_H_eff)) < 1e-10)
+_paulis = paulis(_H_eff)
+_chi = _gate.entangling_angle(_T)[0, 1]
+check("paulis' YY coefficient matches the gate's own entangling_angle exactly",
+      abs(_paulis.get("YY", 0).real - (-_chi / _T)) < 1e-9)
+check("max_eigenphase is small and positive for this weak-coupling example",
+      0 < max_eigenphase(_H_eff, _T) < 0.1)
+try:
+    project(_U, _gate.subsystems, on="not_a_subsystem")
+    check("project rejects an unknown subsystem name", False)
+except KeyError:
+    check("project rejects an unknown subsystem name", True)
 
 print(f"\nALL {len(PASS)} CHECKS PASSED")

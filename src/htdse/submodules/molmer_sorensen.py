@@ -113,16 +113,26 @@ def _mode_list(modes, participation, eta, detune, n_max, mode_name) -> list:
     return out, n_ions
 
 
-def ms_tones(nu, delta, amp, theta=0.0, psi=0.0):
-    """The symmetric two-tone MS drive as a `Tone` pair: blue at +(nu+delta),
-    red at -(nu+delta), phases theta +- psi. Feed straight into
+def ms_tones(nu, delta, amp, theta=0.0, psi=0.0, delta_red=None, amp_red=None):
+    """The two-tone MS drive as a `Tone` pair: blue at +(nu+delta),
+    red at -(nu+delta_red), phases theta +- psi. Feed straight into
     `spin_boson.driven_spins(tones, spins, modes, lamb_dicke=...)`.
 
     theta, psi: scalar, per-ion list, or callable f(t) -- combined pointwise.
     This INVERTS the historical direction: theta/psi (spin/motion phase) are
     now the inputs, and the optical phases phi_blue = theta+psi,
-    phi_red = theta-psi are what gets derived, not the other way around."""
+    phi_red = theta-psi are what gets derived, not the other way around.
+
+    delta_red, amp_red: give the red tone its own detuning/amplitude,
+    independent of the blue tone's (delta/amp) -- an asymmetric bichromatic
+    drive, e.g. for a detuned-carrier Stark shift. None (default): red
+    matches blue, today's symmetric drive. There is no separate "asymmetric"
+    code path at the `driven_spins` level -- two tones differing is just two
+    tones; this is only about which two tones `ms_tones` hands you."""
     mu = nu + delta
+    mu_red = -(nu + (delta if delta_red is None else delta_red))
+    amp_blue = amp
+    amp_red = amp if amp_red is None else amp_red
 
     def add(a, b, sign):
         """a + sign*b, staying a plain number when both are, else a callable."""
@@ -143,8 +153,8 @@ def ms_tones(nu, delta, amp, theta=0.0, psi=0.0):
         ps = ps * n if len(ps) == 1 else ps
         return [add(th[i], ps[i], sign) for i in range(n)]
 
-    return [Tone(offset=mu, amp=amp, phase=combine(+1)),
-            Tone(offset=-mu, amp=amp, phase=combine(-1))]
+    return [Tone(offset=mu, amp=amp_blue, phase=combine(+1)),
+            Tone(offset=mu_red, amp=amp_red, phase=combine(-1))]
 
 
 def _cumtrapz(y, x):

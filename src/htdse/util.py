@@ -85,6 +85,14 @@ def ket(bitstring):
     vec[index] = 1
     return vec
 
+def bra(bitstring):
+    """<bitstring| as a 1-D array, so `bra("00") @ psi` reads as <00|psi> --
+    the amplitude, with no `.conj()`/`.T` at the call site. Population is
+    `abs(bra(s) @ psi) ** 2`. `bra(s) == ket(s)` here since the computational
+    basis is real; conjugation is applied for you so this stays correct if
+    you build `psi` in a different (complex) basis."""
+    return ket(bitstring).conj()
+
 def sampled_pulse(times, values, kind="linear"):
     """Sampled data (times, values) -> a callable f(t), for `coeff=` / `amplitudes=`.
 

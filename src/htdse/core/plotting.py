@@ -43,6 +43,43 @@ def plot_populations(ts, states, labels=None, ax=None):
     return ax
 
 
+def plot_matrix(M, t=0.0, kind="abs", ax=None):
+    """Heatmap of an operator -- the "what does this actually look like"
+    sanity check for a Hamiltonian or a gate, before or instead of solving
+    anything.
+
+    M: a System/Model (`.hamiltonian(t)` is called) or a plain array.
+    kind: "abs" (|M_ij|, default), "real"/"imag" (signed, diverging colormap
+    centered at 0), or "phase" (arg(M_ij), shown only where |M_ij| is
+    non-negligible -- phase of a numerically-zero entry is meaningless noise).
+    """
+    Mv = M.hamiltonian(t) if hasattr(M, "hamiltonian") else M
+    Mv = np.asarray(Mv, dtype=complex)
+    if kind == "abs":
+        data, cmap, vmin, vmax, label = np.abs(Mv), "viridis", 0, None, "|M_ij|"
+    elif kind == "real":
+        lim = np.max(np.abs(Mv.real)) or 1.0
+        data, cmap, vmin, vmax, label = Mv.real, "RdBu_r", -lim, lim, "Re(M_ij)"
+    elif kind == "imag":
+        lim = np.max(np.abs(Mv.imag)) or 1.0
+        data, cmap, vmin, vmax, label = Mv.imag, "RdBu_r", -lim, lim, "Im(M_ij)"
+    elif kind == "phase":
+        mag = np.abs(Mv)
+        thresh = 1e-10 * (mag.max() or 1.0)
+        data = np.where(mag > thresh, np.angle(Mv), np.nan)
+        cmap, vmin, vmax, label = "twilight", -np.pi, np.pi, "arg(M_ij)"
+    else:
+        raise ValueError(f"kind must be 'abs'/'real'/'imag'/'phase', got {kind!r}")
+
+    if ax is None:
+        _, ax = plt.subplots()
+    im = ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
+    plt.colorbar(im, ax=ax, label=label)
+    ax.set_xlabel("column"); ax.set_ylabel("row")
+    ax.set_title(f"{label}, t={t}")
+    return ax
+
+
 def plot_eigenspectrum(evolution, ts, ax=None):
     """Instantaneous eigenvalues of H(t), one line per level, vs t.
 

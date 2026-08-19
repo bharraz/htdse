@@ -563,3 +563,10 @@ def plus_hc(h: Model) -> Model:
     Any jump operators on `h` ride through exactly once (see `dag`): only the
     coherent terms are conjugated and added."""
     return h + h.dag()
+
+
+def hc(h: Model) -> Model:
+    """JUST the Hermitian conjugate -- `h.dag()` as a free function, so it
+    sits next to `plus_hc` instead of being the one operation on this page
+    you have to reach for a method to get. `h + hc(h)` == `plus_hc(h)`."""
+    return h.dag()
