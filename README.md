@@ -212,6 +212,7 @@ system mutated after binding. Population reaching the top of a truncated ladder 
 | You want | Go to |
 |---|---|
 | To run your first simulation, step by step | [GUIDE.md](GUIDE.md) |
+| A one-screen reference while writing code | [CHEATSHEET.md](CHEATSHEET.md) |
 | The physics and numerics under the hood | [PHYSICS.md](PHYSICS.md) |
 | Worked examples, increasing complexity | [demos/](demos/) |
 | To use QuTiP for part of the job | `htdse.interop.qutip` — [GUIDE.md](GUIDE.md#talking-to-qutip) |
