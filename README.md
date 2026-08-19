@@ -73,9 +73,9 @@ isn't a sum of terms.
 flowchart TB
     OP["<b>numpy array</b><br/>a Hamiltonian, a ket, a density matrix, a propagator."]
     MODEL["<b>Model</b> — the convenient path<br/>
-    named groups of terms over a registry of subsystems, both dicts keyed by label.<br/>Group labels replace/retrieve/remove physics; subsystem labels fix the embedding order.<br/>Not a matrix — it builds H(t) on demand<br/><i>built by term() / jump() / pauli_sum() / ms_lamb_dicke1() ...</i>"]
+    named groups of terms over a registry of subsystems, both dicts keyed by label.<br/>Group labels replace/retrieve/remove physics; subsystem labels fix the embedding order.<br/>Not a matrix — it builds H(t) on demand<br/><i>built by term() / jump() / pauli_sum() / driven_spins() ...</i>"]
 
-    OWN["<b>your own class</b> — the general path for physics that isn't a sum of terms:<br/>a closed-form gate, a wrapper, a bridge<br/><i>MSMagnus, TrotterizedSystem, as_mechanism(Qobj)</i>"]
+    OWN["<b>your own class</b> — the general path for physics that isn't a sum of terms:<br/>a closed-form gate, a wrapper, a bridge<br/><i>ms_closed_form, TrotterizedSystem, as_mechanism(Qobj)</i>"]
 
     SYS["<b>System</b> - a Protocol <br/>hamiltonian(t) and/or unitary(t), plus optional jump_operators(t)<br/>"]
 
@@ -118,8 +118,8 @@ Two ways to build a System:
 
 | Your physics is… | You write… | Examples in the package |
 |---|---|---|
-| a sum of named pieces | **a `Model`** | `ms_lamb_dicke1`, `pauli_sum`, `term`, `jump` |
-| a closed-form `U(t)`, or a wrapper | **a class satisfying `System`** | `MSMagnus`, `TrotterizedSystem`, `as_mechanism` |
+| a sum of named pieces | **a `Model`** | `driven_spins`, `jaynes_cummings`, `pauli_sum`, `term`, `jump` |
+| a closed-form `U(t)`, or a wrapper | **a class satisfying `System`** | `ms_closed_form`, `TrotterizedSystem`, `as_mechanism` |
 
 A common pattern for using `Model` would be something like: 
 
@@ -190,7 +190,7 @@ errors instead of `AttributeError`.
 
 Leveraging the conveniences baked into the `Model` class when writing your own system is easy: 
 - **Sparce Matrices**: The solver branches on whether the matrix *you returned* is sparse, so return a CSR and you get the sparce path.
-- **Truncation Guard**: expose a `subsystems` dict (as `MSMagnus` does) or pass `subsystems=` to the evolution.
+- **Truncation Guard**: expose a `subsystems` dict (as `ms_closed_form` does) or pass `subsystems=` to the evolution.
 
 When writing your own system, what you give up is the `Model` algebra: `+`,
 `.replace()`, `.without()`, automatic identity padding, and the materialization cache. For

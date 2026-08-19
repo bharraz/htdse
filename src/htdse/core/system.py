@@ -15,12 +15,16 @@ Two ways to build one, and the common case is not the object-oriented one:
          def my_drive(detune, amp, n_max) -> Model:
              return term(...) + term(...)
 
-     `ms_lamb_dicke1`, `pauli_sum` and `term` itself are all this shape.
+     `driven_spins`, `pauli_sum` and `term` itself are all this shape.
      A `Model` satisfies this protocol, so it goes straight into an evolution.
 
   2. A class implementing this protocol -- for physics that is NOT a sum of
-     terms: a closed-form gate (`MSMagnus`), a wrapper (`TrotterizedSystem`),
-     a bridge (`interop.qutip.as_mechanism`).
+     terms: a closed-form gate (`ms_closed_form`), a wrapper
+     (`TrotterizedSystem`), a bridge (`interop.qutip.as_mechanism`). Note this
+     doesn't mean the caller writes `class Foo`: `ms_closed_form` and
+     `as_mechanism` are both lowercase factory FUNCTIONS that build a small
+     private class internally and hand back an instance -- the class is an
+     implementation detail, never something you type at the call site.
 
 Choosing (2) costs less than it looks. Sparse support is duck-typed on the
 matrix you return (return a CSR and the solver takes the sparse path), and
@@ -73,7 +77,7 @@ class System(Protocol):
       eigendecomposition of H (U = V e^{-iE dt} V^dagger) -- faster AND exact.
     - `subsystems`: {name: dim} of the tensor factors. Enables the truncation
       guard and per-subsystem diagnostics in `report()`. A `Model` has this
-      for free; a hand-written system can set it (see `MSMagnus`) or the
+      for free; a hand-written system can set it (see `ms_closed_form`) or the
       caller can pass `subsystems=` to the evolution instead.
 
     IMPORTANT: a system is treated as frozen once handed to an evolution.

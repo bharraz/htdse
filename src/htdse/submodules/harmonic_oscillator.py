@@ -51,6 +51,33 @@ def fock(n: int, n_max: int) -> np.ndarray:
     return psi
 
 
+def thermal(nbar: float, n_max: int) -> np.ndarray:
+    """Thermal motional state, p_n = nbar^n / (1 + nbar)^(n+1), truncated to
+    n_max and renormalized -- an INITIAL-STATE choice, unrelated to which
+    Hamiltonian rung you evolve it under.
+
+    Warns (not raises) when the truncated tail carries non-negligible weight:
+    nbar comparable to n_max silently distorts the state otherwise, since the
+    renormalization spreads the missing tail probability over the states you
+    kept rather than flagging that it happened."""
+    n = np.arange(n_max + 1, dtype=float)
+    if nbar <= 0:
+        p = np.zeros(n_max + 1)
+        p[0] = 1.0
+    else:
+        p = nbar ** n / (1.0 + nbar) ** (n + 1)
+    total = p.sum()
+    if total < 0.99:
+        import warnings
+        warnings.warn(
+            f"thermal(nbar={nbar}, n_max={n_max}): only {100*total:.1f}% of the "
+            f"thermal distribution fits below n_max -- raise n_max or this state "
+            f"is a truncated approximation, not the nbar you asked for.",
+            stacklevel=2)
+    p = p / total
+    return np.diag(p).astype(complex)
+
+
 class ThermalMotionalDecoherence(System):
     """Damped + dephased quantum harmonic oscillator coupled to a thermal
     reservoir (e.g. trapped-ion motional-mode heating and dephasing):

@@ -87,7 +87,7 @@ U off the unitary group — *the* accuracy diagnostic for anything built on U).
 **The dual primitive.** $H(t)\to U$ is always well-defined (above). The reverse is not:
 $H_{\rm eff} = i\log(U)/t$ is branch-ambiguous (eigenphases fixed only mod $2\pi$) and
 collapses real time-dependence into one constant matrix. So a system that is naturally a
-*gate* — an analytic Magnus or RWA result, like `MSMagnus` — implements `.unitary(t)` only,
+*gate* — an analytic Magnus or RWA result, like `ms_closed_form` — implements `.unitary(t)` only,
 and `UnitaryEvolution`/`DensityMatrixEvolution` consume it directly with no ODE and no
 inversion.
 
@@ -233,43 +233,81 @@ Trotterized one are both solved to machine-level accuracy of their respective mo
 Error injection composes at the term layer:
 
 ```python
-H      = ms_lamb_dicke1(...)                      # groups: carrier_q0, sdf_q0, ...
+H      = driven_spins(tones, spins, modes)        # groups: carrier_q0_tone0, sdf_q0_mode_tone0, ...
 H_err  = H + pauli_term("Z0", coeff=eps_z)        # static sigma_z error, just added
 mech   = TrotterizedSystem(H_err, 0, T, n)     # discretize the whole thing
 ```
 
 ---
 
-## 8. The Mølmer–Sørensen suite (`submodules/molmer_sorensen.py`)
+## 8. Spin-boson physics (`submodules/spin_boson.py`, `trapped_ion.py`, `molmer_sorensen.py`)
 
-One physical setting — N spins + one motional mode, bichromatic beat at
-$\mu = \nu + \delta$, spin phase $\phi_j$, $\Phi_j = \phi_j + \pi/2$ — at three levels of
-approximation, all sharing `(participation, eta, detune, amplitudes, phases, n_max[, nu])`.
+**MS is not a primitive.** A spin driven by any list of `Tone`s (each a signed offset
+$\mu_k$ from resonance, amplitude, phase) coupled to any list of `Mode`s (trap/cavity
+frequency $\nu_m$, Lamb-Dicke coupling $\eta_m$) is the general object:
 
-**Level: stop after the Lamb-Dicke expansion (pre-RWA).** Expand the beam's displacement
-operator $e^{i\eta b_j(a e^{-i\nu t} + a^\dagger e^{i\nu t})}$ in η and keep everything —
-including the off-resonant carrier and counter-rotating terms:
+$$ H(t) = \sum_k \tfrac{\Omega_k(t)}{2}\Big[\sigma_+ e^{-i(\mu_k t+\phi_k(t))}
+\prod_m e^{i\eta_m X_m(t)} + \text{h.c.}\Big], \qquad
+X_m(t) = a_m e^{-i\nu_m t} + a_m^\dagger e^{i\nu_m t} $$
 
-$$ H(t) = \sum_j \Omega_j(t)\cos(\mu t)\Big[\underbrace{\sigma_{\phi_j}}_{\text{carrier},\ \eta^0}
-\;-\; \underbrace{\eta b_j\,\sigma_{\Phi_j}\big(a e^{-i\nu t} + a^\dagger e^{i\nu t}\big)}_{\eta^1}
-\;-\; \underbrace{\tfrac{\eta^2 b_j^2}{2}\,\sigma_{\phi_j}\big(a^2 e^{-2i\nu t} + a^{\dagger 2} e^{2i\nu t} + 2\hat n + 1\big)}_{\eta^2}\Big] $$
+`driven_spins(tones, spins, modes, lamb_dicke=, rwa=)` builds it. MS is what this becomes
+for exactly **two** tones, symmetric about a sideband ($\mu=\pm(\nu+\delta)$) —
+`molmer_sorensen.ms_tones(nu, delta, amp, theta, psi)` builds that specific pair.
 
-`ms_lamb_dicke1` keeps through $\eta^1$; `ms_lamb_dicke2` through $\eta^2$. Both return
-term-layer `Model`s with **per-ion groups** `carrier_qj`, `sdf_qj`, `ld2_qj` — so
-dropping the carrier, miscalibrating one ion, or swapping a drive is a group operation.
-Numerical note: these carry oscillations at μ and 2ν, so the ODE solver has to resolve the
-trap frequency — cost grows with ν·T. That's inherent to simulating pre-RWA physics.
+**One tone, after RWA** (`lamb_dicke=1, rwa=True`) — the whole approximation ladder read off
+one table:
 
-**Level: RWA.** Dropping all fast terms ($\mu$, $2\nu$, …) from the $\eta^1$ line
-(`ms_lamb_dicke1(..., rwa=True)`) leaves the spin-dependent force
+| tone | result | name |
+|---|---|---|
+| $\mu=0$ | $\tfrac{\Omega}{2}\sigma_\phi$ | carrier, no motional content |
+| $\mu=-\nu$ | $g(\sigma_+a+\text{h.c.})$, $g=i\eta\Omega/2$ | red sideband = Jaynes–Cummings |
+| $\mu=+\nu$ | $g(\sigma_+a^\dagger+\text{h.c.})$ | blue sideband = anti-JC |
+| $\mu=\pm(\nu+\delta)$, two tones | $\sigma_{\Phi_j}(f_j(t)a^\dagger+f_j^*(t)a)$ | Mølmer–Sørensen |
+
+The factor of $i$ on the JC bridge is not a convention mismatch: the Lamb-Dicke expansion of
+$e^{i\eta X}$ starts $1+i\eta X+\dots$, so *recoil* coupling (this table) carries an intrinsic
+quarter-turn spin phase relative to a *dipole* coupling written directly as
+$g(\sigma_+a+\text{h.c.})$ (`jaynes_cummings`, `rabi` — no $\eta$, no Lamb-Dicke expansion,
+never derived from the table above). They are deliberately two code paths, meeting exactly at
+this one row.
+
+**Level: stop after the Lamb-Dicke expansion (pre-RWA), `lamb_dicke=1` or `2`.** Expand
+$e^{i\eta X(t)}$ in η and keep everything, including the off-resonant carrier and
+counter-rotating terms:
+
+$$ H(t) = \sum_j \Omega_j(t)\cos(\mu t+\phi_j)\Big[\underbrace{\sigma_{\phi_j}}_{\text{carrier},\ \eta^0}
+\;+\; \underbrace{i\eta_j\,\sigma_{\Phi_j}\big(a e^{-i\nu t} + a^\dagger e^{i\nu t}\big)}_{\eta^1}
+\;-\; \underbrace{\tfrac{\eta_j^2}{2}\,\sigma_{\phi_j}\big(a^2 e^{-2i\nu t} + a^{\dagger 2} e^{2i\nu t} + 2\hat n + 1\big)}_{\eta^2}\Big] $$
+
+`driven_spins(..., lamb_dicke=1)` keeps through $\eta^1$; `lamb_dicke=2` through $\eta^2$.
+Both return term-layer `Model`s with **per-ion, per-tone groups** `carrier_qj_tonek`,
+`sdf_qj_modem_tonek`, `ld2_qj_modem_tonek` — so dropping the carrier, miscalibrating one
+ion, or swapping a drive is a group operation. Numerical note: these carry oscillations at
+$\mu$ and $2\nu$, so the ODE solver has to resolve the trap frequency — cost grows with
+$\nu T$. That's inherent to simulating pre-RWA physics.
+
+**Level: exact, `lamb_dicke=None`.** No expansion of $e^{i\eta X(t)}$ at all —
+`driven_spins(..., lamb_dicke=None)` returns a `System`, not a `Model` (`sigma_+ (x) D(t)`
+is a genuinely t-dependent matrix, not a sum of scalar-coefficient × fixed-operator terms,
+so this rung has no `+`/`.replace()`). Computed via the displacement-operator identity
+$e^{i\eta X(t)} = R(\nu t)\,D(i\eta)\,R(\nu t)^\dagger$, $R(\theta)=e^{i\theta a^\dagger a}$
+diagonal — one `expm` per (spin, mode) at construction, $O(d^2)$ per call. This is the
+reference the Lamb-Dicke expansion is checked against: the carrier Rabi frequency on Fock
+state $|n\rangle$ is exactly $\Omega_n = \Omega\,e^{-\eta^2/2}L_n(\eta^2)$ (Laguerre),
+which `lamb_dicke=1` (n-independent — $\eta^1$ cannot produce Debye-Waller) and
+`lamb_dicke=2` (reproduces the small-$\eta$ expansion $\Omega(1-\eta^2(n+\tfrac12))$) are
+both truncations of.
+
+**Level: RWA.** Dropping all fast terms from the $\eta^1$ line (`lamb_dicke=1, rwa=True`)
+leaves the spin-dependent force, for the symmetric two-tone MS pair:
 
 $$ H_{\rm RWA}(t) = \sum_j \sigma_{\Phi_j}\big(f_j(t)\,a^\dagger + f_j^*(t)\,a\big),
-\qquad f_j(t) = -\tfrac{\eta b_j \Omega_j(t)}{2}\,e^{-i\delta t} $$
+\qquad f_j(t) = -\tfrac{\eta_j \Omega_j(t)}{2}\,e^{-i\delta t} $$
 
 (All $\eta^2$ terms are fast, so "RWA at second order" would collapse back to this — which is
-why `ms_lamb_dicke2` is pre-RWA by construction.)
+why `lamb_dicke=2` is pre-RWA only; `rwa=True` is refused there.)
 
-**Level: closed form (`MSMagnus`).** Because all $\sigma_{\Phi_j}$ commute,
+**Level: closed form (`ms_closed_form`).** Because all $\sigma_{\Phi_j}$ commute,
 $[H_{\rm RWA}(t_1), H_{\rm RWA}(t_2)]$ is a pure spin operator that commutes with everything,
 so the Magnus series **terminates at second order** and the propagator is exact:
 
@@ -293,21 +331,25 @@ zero).
 quasiprobability $W(x,p)$ of a Fock-basis ket or reduced ρ — `trace_out` the spins first — with
 negativity of $W$ as the visible signature of nonclassicality.)
 
-`MSMagnus` implements `.unitary(t)` only (it *is* a gate — section 2's dual primitive), and
-its integrals are dense-grid quadrature (`points_per_period`). Two honesty guards: constant
-phases required (time-dependent $\phi_j$ breaks the commutator structure that terminated the
-series — use the LD builders for that), and remember the closed form is the
+`ms_closed_form` implements `.unitary(t)` only (it *is* a gate — section 2's dual primitive),
+built as a factory FUNCTION (same convention as `interop.qutip.as_mechanism`) rather than a
+class the caller instantiates, and its integrals are dense-grid quadrature
+(`points_per_period`). Two honesty guards: constant phases required (time-dependent $\phi_j$
+breaks the commutator structure that terminated the series — use `driven_spins(...,
+rwa=True)` and an ODE solve for that), and remember the closed form is the
 infinite-dimensional result: it agrees with an ODE solve of the *truncated* model only on
 states away from the Fock edge, so pick `n_max` well above the occupation $|\alpha|^2$
 reaches.
 
-**How the three levels are meant to be used together:** `MSMagnus` is the target;
-`ms_lamb_dicke1/2` (optionally Trotterized, optionally + `pauli_term("Z0", ...)` errors,
-optionally with a swapped/noisy drive group) is the realized system; `compare_over` with
-`process_fidelity`/`fidelity` quantifies the gap. Cross-validation of the suite itself:
-Magnus vs ODE-solved `rwa=True` builder agree to <1e-7, α and Θ match their analytic
-constant-Ω forms, and the loop-closure gate equals the pure geometric-phase gate
-(`tests/test_molmer_sorensen.py`).
+**How the levels are meant to be used together:** `ms_closed_form` is the target;
+`driven_spins(ms_tones(...), lamb_dicke=1 or 2)` (optionally Trotterized, optionally +
+`pauli_term("Z0", ...)` errors, optionally with a swapped/noisy drive group) is the realized
+system; `compare_over` with `process_fidelity`/`fidelity` quantifies the gap.
+Cross-validation of the suite itself: closed form vs ODE-solved `rwa=True` agree to <1e-7, α
+and Θ match their analytic constant-Ω forms, the loop-closure gate equals the pure
+geometric-phase gate, the JC/anti-JC/carrier rows of the tone table are each checked
+directly, and the exact (`lamb_dicke=None`) rung's carrier Rabi frequency matches the
+Laguerre closed form (`tests/test_molmer_sorensen.py`).
 
 ---
 

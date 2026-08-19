@@ -23,7 +23,8 @@ analytic target vs. a detuned reality.
 
 ```python
 from htdse.submodules.harmonic_oscillator import fock
-from htdse.submodules.molmer_sorensen import MSMagnus, ms_lamb_dicke1
+from htdse.submodules.spin_boson import Mode, driven_spins
+from htdse.submodules.molmer_sorensen import ms_tones, ms_closed_form
 from htdse.submodules.spin import pauli_term
 
 delta, eta = 1.0, 0.1                    # gate detuning, Lamb-Dicke parameter
@@ -31,6 +32,7 @@ Omega = delta / (eta * np.sqrt(2))       # pi/4 entangling-angle calibration
 T = 2 * np.pi / delta                    # loop-closure time
 n_max = 12                               # Fock truncation
 b = np.array([1, 1]) / np.sqrt(2)        # COM-mode participation
+nu = 40.0                                 # trap frequency (pre-RWA builders need it)
 ```
 
 ## Step 1 — compose the target
@@ -39,7 +41,7 @@ The target is whatever defines "correct". Here, the analytic Magnus result — a
 defined as a gate (`unitary(t)`), no ODE involved:
 
 ```python
-target = MSMagnus(b, eta, delta, Omega, [0.0, 0.0], n_max)
+target = ms_closed_form(b, eta, delta, Omega, [0.0, 0.0], n_max)
 ```
 
 For one you build yourself, compose named terms:
@@ -55,12 +57,15 @@ exists until an evolution asks.
 
 ## Step 2 — build the realized model
 
-Same model, error-bearing pieces swapped in. Here the pre-RWA Lamb-Dicke builder with a
+Same model, error-bearing pieces swapped in. Here `driven_spins` at
+`lamb_dicke=1, rwa=True` -- the ODE-solved counterpart of the closed form above -- with a
 5% detuning miscalibration:
 
 ```python
 eps = 0.05
-H_real = ms_lamb_dicke1(b, eta, delta * (1 + eps), Omega, [0.0, 0.0], n_max, rwa=True)
+mode = Mode(nu=nu, eta=eta * b, n_max=n_max)
+tones_real = ms_tones(nu, delta * (1 + eps), Omega, theta=[0.0, 0.0])
+H_real = driven_spins(tones_real, ["q0", "q1"], [mode], lamb_dicke=1, rwa=True)
 ```
 
 Realized models are ordinary `Model`s, so error injection is composition:
