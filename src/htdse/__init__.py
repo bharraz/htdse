@@ -15,7 +15,7 @@ from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
 from .core.subsystems import embed, partial_trace
 from .core.compare import compare_over
 from .core.convergence import converged
-from .core.read import show, project, closure, generator, paulis, max_eigenphase
+from .core.read import show, project, closure, generator, paulis, max_eigenphase, expect
 from .core.plotting import plot_populations, plot_eigenspectrum, plot_matrix
 from .magnus import magnus, magnus_pauli, pauli_decompose
 from .util import (MAG_THRESHOLD, dag, otimes, ket, bra, projector, fidelity,
@@ -31,6 +31,6 @@ __all__ = [
     "MAG_THRESHOLD", "dag", "otimes", "ket", "bra", "projector", "fidelity",
     "process_fidelity", "density_fidelity", "relative_phase",
     "binary_to_index", "index_to_binary", "sampled_pulse",
-    "show", "project", "closure", "generator", "paulis", "max_eigenphase",
+    "show", "project", "closure", "generator", "paulis", "max_eigenphase", "expect",
     "plot_populations", "plot_eigenspectrum", "plot_matrix",
 ]

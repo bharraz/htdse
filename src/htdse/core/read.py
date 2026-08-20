@@ -123,6 +123,20 @@ def max_eigenphase(H_eff, T: float) -> float:
     return float(np.max(np.abs(evals)) * T / np.pi)
 
 
+def expect(state, operator) -> complex:
+    """<psi|operator|psi> for a ket, Tr(operator rho) for a density matrix --
+    the one call that reads out an expectation value regardless of which
+    Evolution class produced `state`. `bra(s) @ psi` still reads best for a
+    literal amplitude <s|psi>; `expect` is for "what does this operator read
+    on this state," ket or mixed, without branching on state.ndim yourself."""
+    state = np.asarray(state)
+    if state.ndim == 1:
+        return complex(np.vdot(state, operator @ state))
+    if state.ndim == 2:
+        return complex(np.trace(operator @ state))
+    raise ValueError(f"expect needs a ket (d,) or density matrix (d,d), got shape {state.shape}")
+
+
 def show(H, t: float = 0.0, tol: float = 1e-10):
     """Print H(t) readably instead of a raw ndarray repr: a Pauli-coefficient
     table when dim = 2^n (via `paulis`), otherwise the rounded matrix with

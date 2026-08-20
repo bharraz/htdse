@@ -7,12 +7,22 @@ sideband: blue at +(nu+delta), red at -(nu+delta), phases theta +- psi
 to `spin_boson.driven_spins(..., lamb_dicke=1)` for the pre-RWA Hamiltonian,
 or `lamb_dicke=None` for the exact one.
 
-    from htdse.submodules.spin_boson import driven_spins
-    from htdse.submodules.molmer_sorensen import ms_tones, MSMode
+This module has ONE mode vocabulary, `spin_boson.Mode(nu, eta, n_max, name)`
+-- the same object `driven_spins` takes. `ms_closed_form` needs only `eta`
+and the detuning `delta` (given separately, see below) from a `Mode`, not
+`nu`; `nu` is still accepted so the SAME `Mode` can drive both the ODE path
+(`driven_spins(ms_tones(nu, delta, ...), spins, modes)`) and this closed
+form (`ms_closed_form(spins, modes, [delta], ...)`) without redefining the
+mode's `eta`/`n_max` twice under two different types.
+
+    from htdse.submodules.spin_boson import Mode, driven_spins
+    from htdse.submodules.molmer_sorensen import ms_tones, ms_closed_form
 
     tones = ms_tones(nu, delta, amplitude, theta=0.0, psi=0.0)
     H = driven_spins(tones, ["q0", "q1"], modes, lamb_dicke=1)          # pre-RWA
     H_rwa = driven_spins(tones, ["q0", "q1"], modes, lamb_dicke=1, rwa=True)  # RWA
+    gate = ms_closed_form(["q0", "q1"], modes, [delta], amplitude)      # closed form,
+                                                                          # cross-checks H_rwa
 
 Conventions follow C. Monroe, "Primer on Molmer-Sorensen Gates in Trapped
 Ions" (2021); equation numbers below refer to it. hbar = 1 throughout.
@@ -47,70 +57,42 @@ the truncated model exactly. The two agree on any state far from the Fock
 edge, but differ on states near |n_max> -- compare via low-Fock states, not
 full-space process fidelity.
 """
-from typing import NamedTuple
-
 import numpy as np
+from scipy import sparse as _sp
 from scipy.linalg import expm
+
+from scipy.sparse.linalg import expm as _sparse_expm
 
 from ..core.subsystems import embed
 from ..core.system import System
 from .harmonic_oscillator import annihilation
-from .spin_boson import Tone, _as_consts, _as_funcs, _eval, _sigma
+from .spin_boson import Mode, Tone, _as_consts, _as_funcs, _eval, _sigma
 
 
-class MSMode(NamedTuple):
-    """One motional mode, as the CLOSED FORM sees it -- eta and detune only
-    (the closed form's formula never needs the bare trap frequency nu, only
-    the already-combined detuning `delta = mu - nu`; use `spin_boson.Mode`,
-    which does carry `nu`, for `driven_spins`).
+def _prepare(spins, modes, delta):
+    """Validate spins/modes/delta and broadcast eta/delta to per-ion arrays.
 
-    eta    : eta_{i,m} per ion. Scalar broadcasts.
-    detune : delta_{i,m} = mu - nu_m, per ion. Scalar broadcasts. The loop of
-             a constant-amplitude symmetric drive closes at T = 2*pi/|delta|.
-    n_max  : Fock truncation of this mode.
-    name   : subsystem name. Must be unique across modes.
-    """
-    eta: object
-    detune: object
-    n_max: int
-    name: str = "mode"
-
-
-def _norm_mode(md: MSMode, n_ions) -> MSMode:
-    eta = np.broadcast_to(np.asarray(md.eta, dtype=float), (n_ions,)).copy()
-    detune = np.broadcast_to(np.asarray(md.detune, dtype=float), (n_ions,)).copy()
-    return MSMode(eta, detune, int(md.n_max), str(md.name))
-
-
-def _mode_list(modes, participation, eta, detune, n_max, mode_name) -> list:
-    legacy = [participation, eta, detune, n_max]
-    if modes is not None:
-        if any(v is not None for v in legacy):
-            raise ValueError("pass either `modes=` or the single-mode shorthand "
-                             "(participation, eta, detune, n_max) -- not both")
-        modes = list(modes)
-        if not modes:
-            raise ValueError("`modes=` is empty: an MS drive needs at least one mode")
-        for md in modes:
-            if not hasattr(md, "detune"):
-                raise TypeError(
-                    f"{md!r} has no `detune` -- this looks like a "
-                    "`spin_boson.Mode` (nu, eta, n_max), which is for "
-                    "`driven_spins`. `ms_closed_form` needs "
-                    "`MSMode(eta, detune, n_max)` (detuning directly, no `nu`).")
-        n_ions = len(np.atleast_1d(modes[0].eta)) if not np.isscalar(modes[0].eta) else 1
-        out = [_norm_mode(md, n_ions) for md in modes]
-    else:
-        if any(v is None for v in legacy):
-            raise ValueError("single-mode form needs participation, eta, detune "
-                             "and n_max (or use `modes=[MSMode(...), ...]`)")
-        b = np.atleast_1d(np.asarray(participation, dtype=float))
-        n_ions = len(b)
-        out = [_norm_mode(MSMode(float(eta) * b, float(detune), int(n_max), mode_name), n_ions)]
-    names = [md.name for md in out]
+    Returns (n_ions, etas, deltas): etas[m] and deltas[m] are (n_ions,) float
+    arrays for modes[m]."""
+    n_ions = len(spins)
+    if len(set(spins)) != len(spins):
+        raise ValueError(f"spin names must be unique, got {spins}")
+    modes = list(modes)
+    if not modes:
+        raise ValueError("`modes` is empty: an MS drive needs at least one mode")
+    for md in modes:
+        if not hasattr(md, "eta") or not hasattr(md, "n_max"):
+            raise TypeError(f"{md!r} is not a `spin_boson.Mode(nu, eta, n_max, name)`")
+    names = [md.name for md in modes]
     if len(set(names)) != len(names):
         raise ValueError(f"mode names must be unique, got {names}")
-    return out, n_ions
+    if not isinstance(delta, (list, tuple)) or len(delta) != len(modes):
+        raise ValueError(
+            f"delta must be a list with one entry per mode ({len(modes)} here), "
+            f"e.g. delta=[value] for a single mode -- got {delta!r}")
+    etas = [np.broadcast_to(np.asarray(md.eta, dtype=float), (n_ions,)).copy() for md in modes]
+    deltas = [np.broadcast_to(np.asarray(d, dtype=float), (n_ions,)).copy() for d in delta]
+    return n_ions, etas, deltas
 
 
 def ms_tones(nu, delta, amp, theta=0.0, psi=0.0, delta_red=None, amp_red=None):
@@ -166,9 +148,9 @@ def _cumtrapz(y, x):
     return out
 
 
-def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
-                   phases=0.0, n_max=None, points_per_period=400, *,
-                   modes=None, motion_phases=0.0) -> System:
+def ms_closed_form(spins, modes, delta, amplitudes=1.0, phases=0.0,
+                   points_per_period=400, *, motion_phases=0.0,
+                   sparse=False) -> System:
     """Exact (terminated-Magnus) unitary of the post-RWA MS spin-dependent
     force. Defined as a GATE (`.unitary(t)` only) -- `UnitaryEvolution` and
     `DensityMatrixEvolution` consume it directly with no ODE solve.
@@ -177,10 +159,29 @@ def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
     `interop.qutip.as_system`), not a class the caller instantiates: the
     physics is not object-oriented, so nothing here is.
 
+    spins: ion subsystem names, e.g. ["q0", "q1"] -- same convention as
+        `driven_spins`.
+    modes: list of `spin_boson.Mode(nu, eta, n_max, name)`. `nu` is carried
+        only so the same `Mode` can be reused with `driven_spins` for an ODE
+        cross-check; this closed form's own math never touches it.
+    delta: list with ONE entry per mode (`delta[m]` is that mode's detuning
+        mu - nu, scalar or per-ion array) -- always a list, even for one
+        mode (`delta=[value]`), matching `modes` being always a list. No
+        shape-guessing between "one mode" and "one detuning."
+
     Restrictions inherent to the closed form: `phases` must be CONSTANT per
     ion (time-dependent spin phase breaks the commutator structure that
     terminates the Magnus series -- use `driven_spins(..., rwa=True)` and an
     ODE solve for that), and t >= 0. Time-dependent amplitudes are fine.
+    Every mode here is assumed symmetric (one detuning per ion-mode, shared
+    by both the blue and red tone) -- an asymmetric `ms_tones(delta_red=...)`
+    drive has no closed form; solve it via `driven_spins` + an ODE instead.
+
+    sparse: embed the spin/mode operators as scipy CSR and exponentiate with
+        `scipy.sparse.linalg.expm` instead of a dense `scipy.linalg.expm`.
+        `.unitary(t)` then returns a CSR matrix (sparse in, sparse out, same
+        convention as `Model.sparse()`) -- call `.toarray()` if you need the
+        dense propagator.
 
     Returned object's helpers: `.alpha(t)` / `.alpha_trajectory(ts)` (per-ion,
     per-mode phase-space trajectory), `.geometric_phase(t)` (Theta_jk, summed
@@ -189,7 +190,7 @@ def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
     period of the FASTEST detuning (default 400; refine for very fast
     amplitude modulation).
     """
-    modes, n_ions = _mode_list(modes, participation, eta, detune, n_max, "mode")
+    n_ions, etas, deltas = _prepare(spins, modes, delta)
     n_modes = len(modes)
     amp_fns = _as_funcs(amplitudes, n_ions, "amplitudes")
     # SPIN phase must be constant: it sets sigma_{Phi_j}, and a time-dependent
@@ -199,33 +200,40 @@ def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
     # never through the spin operators, so [H(t1), H(t2)] stays a pure spin
     # operator and the series still terminates.
     motion_fns = _as_funcs(motion_phases, n_ions, "motion_phases")
-    subsystems = {f"q{j}": 2 for j in range(n_ions)}
+    subsystems = {q: 2 for q in spins}
     for md in modes:
         subsystems[md.name] = md.n_max + 1
     a_ops = [annihilation(md.n_max) for md in modes]
     dim = 2 ** n_ions
     for md in modes:
         dim *= md.n_max + 1
+
+    def _emb(op, on):
+        return embed(_sp.csr_matrix(op), subsystems, on) if sparse \
+            else np.asarray(embed(op, subsystems, on))
+
+    def _zeros():
+        return (_sp.csr_matrix((dim, dim), dtype=complex) if sparse
+                else np.zeros((dim, dim), dtype=complex))
+
     # sigma_{Phi_j} with Phi = phi + pi/2, embedded on the joint space -- built
     # eagerly, once: only `.unitary()` pays for it, but it's O(n_ions) embeds,
     # not worth a lazy cache.
-    S = [np.asarray(embed(_sigma(phi + np.pi / 2), subsystems, f"q{j}"))
-         for j, phi in enumerate(phase_consts)]
+    S = [_emb(_sigma(phi + np.pi / 2), q) for phi, q in zip(phase_consts, spins)]
 
     def f(j, m, t):
         """f_{j,m}(t) = -(eta_{j,m} Omega_j(t)/2) e^{-i(delta_{j,m} t + psi_j)}
         (Monroe Eq. 20). The motion phase psi_j enters here and ONLY here."""
-        md = modes[m]
         t = np.asarray(t, dtype=float)
         Om = _eval(amp_fns[j], t)
         psi = _eval(motion_fns[j], t)
-        return -(md.eta[j] * Om / 2) * np.exp(-1j * (md.detune[j] * t + psi))
+        return -(etas[m][j] * Om / 2) * np.exp(-1j * (deltas[m][j] * t + psi))
 
     def kernel(grid):
         return np.array([[f(j, m, grid) for m in range(n_modes)] for j in range(n_ions)])
 
     def grid_for(t):
-        fastest = max((abs(d) for md in modes for d in md.detune), default=0.0)
+        fastest = max((abs(d) for dl in deltas for d in dl), default=0.0)
         period = 2 * np.pi / max(fastest, 1e-12)
         n = int(max(2001, points_per_period * (t / period + 1)))
         return np.linspace(0.0, t, n)
@@ -277,27 +285,29 @@ def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
             Th = self.geometric_phase(t)
             return Th + Th.T
 
-        def unitary(self, t=None) -> np.ndarray:
+        def unitary(self, t=None):
             """U(t) = exp(Omega1 + Omega2): spin-dependent displacement
-            (summed over modes) times the geometric-phase gate."""
+            (summed over modes) times the geometric-phase gate. Dense
+            ndarray, or CSR if built with `sparse=True`."""
             if t is None:
                 raise ValueError("ms_closed_form(...).unitary needs an explicit time t")
             t = float(t)
             if t < 0:
                 raise ValueError("ms_closed_form is defined for t >= 0")
             alpha, Theta = magnus(t)
-            D = np.zeros((dim, dim), dtype=complex)
+            D = _zeros()
             for j in range(n_ions):
                 for m, md in enumerate(modes):
                     a = a_ops[m]
-                    Mjm = np.asarray(embed(alpha[j, m] * a.conj().T
-                                           - np.conj(alpha[j, m]) * a,
-                                           subsystems, md.name))
+                    op = alpha[j, m] * a.conj().T - np.conj(alpha[j, m]) * a
+                    Mjm = _emb(op, md.name)
                     D = D + S[j] @ Mjm
-            G = np.zeros_like(D)
+            G = _zeros()
             for j in range(n_ions):
                 for k in range(n_ions):
                     G = G + 1j * Theta[j, k] * (S[j] @ S[k])
+            if sparse:
+                return _sparse_expm((D + G).tocsc())
             return np.asarray(expm(D + G))
 
         @property
@@ -312,7 +322,8 @@ def ms_closed_form(participation=None, eta=None, detune=None, amplitudes=1.0,
     return _MSGate()
 
 
-def ideal_gate(n_ions, eta, delta, Omega, n_max, participation=None) -> System:
+def ideal_gate(n_ions, eta, delta, Omega, n_max, participation=None,
+               sparse=False) -> System:
     """The common case, in one call: an ideal (constant amplitude, zero spin
     phase) symmetric two-tone MS gate on `n_ions` ions, one mode -- the
     closed-form gate to reach for FIRST, before composing tones/modes by hand
@@ -322,10 +333,17 @@ def ideal_gate(n_ions, eta, delta, Omega, n_max, participation=None) -> System:
     pass a normalized array, e.g. [1,1]/sqrt(2) for two ions, for a physical
     COM-mode calibration).
 
-    Equivalent to `ms_closed_form(participation, eta, delta, Omega, [0.0]*n_ions, n_max)`."""
+    Builds `spin_boson.Mode(nu=0.0, eta, n_max)` internally -- `nu` plays no
+    role in the closed form (see `ms_closed_form`), so this convenience
+    wrapper doesn't ask you to supply one; build the `Mode` yourself with its
+    real `nu` if you also want the matching `driven_spins` ODE cross-check.
+
+    Equivalent to `ms_closed_form(spins, [Mode(0.0, eta*b, n_max)], [delta], Omega, 0.0)`."""
     if participation is None:
         participation = [1.0] * n_ions
-    return ms_closed_form(participation, eta, delta, Omega, [0.0] * n_ions, n_max)
+    spins = [f"q{j}" for j in range(n_ions)]
+    modes = [Mode.from_participation(nu=0.0, eta=eta, b=participation, n_max=n_max)]
+    return ms_closed_form(spins, modes, [delta], Omega, [0.0] * n_ions, sparse=sparse)
 
 
 # ---------------------------------------------------------------------------

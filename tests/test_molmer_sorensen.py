@@ -15,7 +15,7 @@ from htdse.submodules.spin import sigma_y, sigma_x, pauli_term
 from htdse.submodules.spin_boson import (Tone, Mode, driven_spins, jaynes_cummings,
                                          rabi, exact_drive)
 from htdse.submodules.trapped_ion import IonChain
-from htdse.submodules.molmer_sorensen import (ms_tones, ms_closed_form, MSMode,
+from htdse.submodules.molmer_sorensen import (ms_tones, ms_closed_form,
                                               plot_phase_space, expectation_alpha)
 
 PASS = []
@@ -72,7 +72,7 @@ check("groups per ion, swappable",
       {"carrier_q0_tone0", "carrier_q0_tone1", "sdf_q0_mode_tone0", "sdf_q0_mode_tone1"} <= set(H1.groups))
 
 print("== ms_closed_form == driven_spins(ms_tones(...), lamb_dicke=1, rwa=True), solved by ODE ==")
-gate = ms_closed_form(b, eta, delta, Omega, phases, n_max)
+gate = ms_closed_form(["q0", "q1"], [mode], [delta], Omega, phases)
 rng = np.random.default_rng(3)
 lowf = rng.normal(size=n_max + 1) + 1j * rng.normal(size=n_max + 1)
 lowf[3:] = 0.0
@@ -192,9 +192,8 @@ tones_mm = ms_tones(nu1, delta, Omega, theta=0.0, psi=0.0)
 H_mm = driven_spins(tones_mm, ["q0", "q1"], [mode0, mode1], lamb_dicke=1)
 check("carrier emitted once per ion, sdf per ion+mode",
       {"carrier_q0_tone0", "carrier_q0_tone1", "sdf_q0_mode0_tone0", "sdf_q0_mode1_tone0"} <= set(H_mm.groups))
-gate_mm = ms_closed_form(amplitudes=Omega, phases=phases,
-                         modes=[MSMode(eta * np.array(b), delta, n_max, "mode0"),
-                                MSMode(0.07 * np.array(b), nu1 + delta - nu2, 5, "mode1")])
+gate_mm = ms_closed_form(["q0", "q1"], [mode0, mode1], [delta, nu1 + delta - nu2],
+                         Omega, phases)
 al = gate_mm.alpha(0.5 * T)
 check("alpha has shape (n_ions, n_modes)", al.shape == (2, 2))
 
@@ -245,9 +244,22 @@ except AttributeError as e:
     check("exact_drive .replace() raises a clear error", "replace" in str(e))
 
 g_ideal = ideal_gate(2, eta, delta, Omega, n_max)
-g_manual = ms_closed_form([1.0, 1.0], eta, delta, Omega, [0.0, 0.0], n_max)
+mode_manual = Mode.from_participation(nu=0.0, eta=eta, b=[1.0, 1.0], n_max=n_max)
+g_manual = ms_closed_form(["q0", "q1"], [mode_manual], [delta], Omega, [0.0, 0.0])
 check("ideal_gate == ms_closed_form with explicit defaults",
       np.allclose(np.asarray(g_ideal.unitary(0.3 * T)), np.asarray(g_manual.unitary(0.3 * T))))
+
+print("== sparse ms_closed_form / exact_drive ==")
+g_sparse = ms_closed_form(["q0", "q1"], [mode], [delta], Omega, phases, sparse=True)
+U_sparse = g_sparse.unitary(0.4 * T)
+U_dense = gate.unitary(0.4 * T)
+check("sparse ms_closed_form returns CSR", hasattr(U_sparse, "toarray"))
+check("sparse ms_closed_form matches dense",
+      np.allclose(U_sparse.toarray(), np.asarray(U_dense), atol=1e-10))
+
+ex_sparse = driven_spins([Tone(0.0)], ["q0"], [mode1q], lamb_dicke=None, sparse=True)
+check("sparse exact_drive matches dense",
+      np.allclose(np.asarray(ex_sparse.hamiltonian(0.3)), np.asarray(ex.hamiltonian(0.3)), atol=1e-10))
 
 check("explain() runs and TONE_TABLE is non-empty", len(TONE_TABLE) > 0)
 explain()

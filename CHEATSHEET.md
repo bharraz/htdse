@@ -64,6 +64,7 @@ explain()   # prints the full tone table + approximation ladder, no source-readi
 
 mode = Mode.from_participation(nu=nu, eta=eta_bare, b=1.0, n_max=8)     # one spin
 H = driven_spins([Tone(offset=-nu)], ["q0"], [mode], lamb_dicke=1, rwa=True)  # == JC
+H_big = driven_spins([Tone(offset=-nu)], ["q0"], [mode], lamb_dicke=1, sparse=True)  # CSR H(t)
 ```
 
 | you want | `lamb_dicke=` | `rwa=` |
@@ -83,7 +84,14 @@ tones = ms_tones(nu, delta, Omega, theta=0.0, psi=0.0)
 H_rwa = driven_spins(tones, ["q0", "q1"], [mode], lamb_dicke=1, rwa=True)   # ODE-solved
 target = ideal_gate(n_ions=2, eta=0.1, delta=0.5, Omega=Omega, n_max=8)     # closed form, no ODE
 
+# same call directly, with the SAME `mode` object above (nu carried but unused by the
+# math -- it's what lets one Mode drive both this closed form and H_rwa's ODE solve)
+target2 = ms_closed_form(["q0", "q1"], [mode], [delta], amplitudes=Omega, phases=[0.0, 0.0])
+target_big = ms_closed_form(["q0", "q1"], [mode], [delta], Omega, [0.0, 0.0], sparse=True)  # CSR unitary
+
 tones_asym = ms_tones(nu, delta, Omega, delta_red=0.65, amp_red=0.9*Omega)  # asymmetric bichromatic drive
+                                                                              # (driven_spins/ODE only --
+                                                                              # ms_closed_form needs symmetric delta)
 ```
 
 ### Physics that isn't a sum of terms — write a `System`
@@ -158,6 +166,8 @@ $$ \langle 00|\psi\rangle $$
 ```python
 ht.bra("00") @ psi        # amplitude <00|psi> -- no .conj()/.T at the call site
 abs(ht.bra("00") @ psi)**2   # population
+ht.expect(psi, Z)         # <psi|Z|psi> for a ket, Tr(Z rho) for a density matrix --
+                           # same call regardless of which Evolution class produced the state
 ```
 
 ## Reading a solved gate — what did it actually implement?

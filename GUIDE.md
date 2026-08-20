@@ -41,7 +41,8 @@ The target is whatever defines "correct". Here, the analytic Magnus result — a
 defined as a gate (`unitary(t)`), no ODE involved:
 
 ```python
-target = ms_closed_form(b, eta, delta, Omega, [0.0, 0.0], n_max)
+mode = Mode.from_participation(nu=nu, eta=eta, b=b, n_max=n_max)
+target = ms_closed_form(["q0", "q1"], [mode], [delta], amplitudes=Omega, phases=[0.0, 0.0])
 ```
 
 For one you build yourself, compose named terms:

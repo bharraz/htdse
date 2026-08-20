@@ -62,6 +62,7 @@ import math
 from typing import NamedTuple
 
 import numpy as np
+from scipy import sparse as _sp
 from scipy.linalg import expm
 
 from ..core.subsystems import embed
@@ -309,7 +310,8 @@ def _tone_group(H, q, j, modes, ops, mu, amp_fn, phase_fn, lamb_dicke, rwa, tag)
 # the primitive
 # ---------------------------------------------------------------------------
 
-def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None) -> Model:
+def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None,
+                 sparse=False) -> Model:
     """The Hamiltonian of `spins` driven by `tones`, coupled to `modes`, at
     Lamb-Dicke order `lamb_dicke` (1 or 2; use the closed-form gate or the
     exact builder for the un-expanded Hamiltonian). See the module docstring
@@ -320,22 +322,24 @@ def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None) -> M
            2-dim subsystem. `prefix` is ignored if spins is already given as
            names; kept only for parity with callers that used to pass a count.
     modes: list of `Mode`.
+    sparse: at `lamb_dicke=1/2` this is just `driven_spins(...).sparse()` done
+        for you; at `lamb_dicke=None` it is the only way to get a sparse
+        `exact_drive` (that rung has no `Model` to call `.sparse()` on
+        afterward -- see `exact_drive`).
     """
     for md in modes:
         if not hasattr(md, "nu"):
             raise TypeError(
-                f"{md!r} has no `nu` -- this looks like a "
-                "`molmer_sorensen.MSMode` (eta, detune, n_max), which is only "
-                "for `ms_closed_form` (parametrized by detuning directly). "
-                "`driven_spins` needs `spin_boson.Mode(nu, eta, n_max)`.")
+                f"{md!r} has no `nu` -- `driven_spins` needs "
+                "`spin_boson.Mode(nu, eta, n_max)`.")
     if lamb_dicke is None:
-        return exact_drive(tones, spins, modes)
+        return exact_drive(tones, spins, modes, sparse=sparse)
     if lamb_dicke not in (1, 2):
         raise ValueError(f"lamb_dicke must be 1, 2, or None, got {lamb_dicke!r}")
     n = len(spins)
     modes = [_norm_mode(md, n) for md in modes]
     subs = {**{q: 2 for q in spins}, **{md.name: md.n_max + 1 for md in modes}}
-    H = Model(subs)
+    H = Model(subs).sparse(sparse)
     ops = {md.name: (annihilation(md.n_max), annihilation(md.n_max).conj().T)
            for md in modes}
     for k, tone in enumerate(tones):
@@ -363,7 +367,7 @@ def jaynes_cummings(g, spin, mode, n_max, detuning=0.0, name="jc") -> Model:
     return H
 
 
-def exact_drive(tones, spins, modes) -> System:
+def exact_drive(tones, spins, modes, sparse: bool = False) -> System:
     """The un-expanded, un-RWA'd Hamiltonian: no Lamb-Dicke expansion of
     `e^{i eta X(t)}`, at all -- this is `driven_spins(..., lamb_dicke=None)`.
 
@@ -376,6 +380,13 @@ def exact_drive(tones, spins, modes) -> System:
     `D(i eta e^{i nu t}) = R(nu t) D(i eta) R(nu t)^dag`, `R` diagonal in the
     Fock basis -- one `expm` per (spin, mode) at construction, then O(dim^2)
     per call via a diagonal conjugation, not per-call `expm`.
+
+    sparse: embed `sigma_+` and the displacement block as scipy CSR instead of
+        dense arrays, so `.hamiltonian(t)`'s O(dim^2) cost becomes O(nnz).
+        There is no `.sparse()` to call afterward the way a `Model` has --
+        this rung has no `Model` underneath -- so it must be chosen here.
+        `.hamiltonian(t)` still densifies (same contract as `Model`); the
+        solver reads sparse `H(t)` from `._h_native` instead.
     """
     n = len(spins)
     modes = [_norm_mode(md, n) for md in modes]
@@ -408,20 +419,32 @@ def exact_drive(tones, spins, modes) -> System:
                 d *= v
             return d
 
-        def hamiltonian(self, t):
-            H = np.zeros((self.dim, self.dim), dtype=complex)
+        def _build(self, t):
+            sp_local = _sp.csr_matrix(sigma_plus) if sparse else sigma_plus
+            eye_full = (_sp.identity(self.dim, dtype=complex, format="csr")
+                        if sparse else np.eye(self.dim, dtype=complex))
+            H = _sp.csr_matrix((self.dim, self.dim), dtype=complex) if sparse \
+                else np.zeros((self.dim, self.dim), dtype=complex)
             for k, tone in enumerate(tones):
                 amp_fns = _as_funcs(tone.amp, n, f"tones[{k}].amp")
                 phase_fns = _as_funcs(tone.phase, n, f"tones[{k}].phase")
                 for j, q in enumerate(spins):
                     D = displacement(j, t)
+                    if sparse and modes:
+                        D = _sp.csr_matrix(D)
                     coeff = (amp_fns[j](t) / 2) * cmath.exp(-1j * (tone.offset * t + phase_fns[j](t)))
-                    Sp = embed(sigma_plus, self.subsystems, q)
-                    Dfull = embed(D, self.subsystems, mode_names) if modes else \
-                        np.eye(self.dim, dtype=complex)
+                    Sp = embed(sp_local, self.subsystems, q)
+                    Dfull = embed(D, self.subsystems, mode_names) if modes else eye_full
                     term_mat = coeff * (Sp @ Dfull)
                     H = H + term_mat + term_mat.conj().T
-            return H
+            return H.tocsr() if sparse else H
+
+        def hamiltonian(self, t):
+            H = self._build(t)
+            return H.toarray() if sparse else H
+
+        def _h_native(self, t):
+            return self._build(t)
 
         def __repr__(self):
             return f"exact_drive({len(tones)} tone(s), spins={spins}, modes={[md.name for md in modes]})"

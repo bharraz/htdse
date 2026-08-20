@@ -17,7 +17,8 @@ from htdse import (System, Model, term, jump, plus_hc, hc,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, embed, partial_trace, compare_over,
                    otimes, ket, bra, fidelity, process_fidelity, density_fidelity, quiet, dag,
-                   SparseSuggestion, show, project, closure, generator, paulis, max_eigenphase)
+                   SparseSuggestion, show, project, closure, generator, paulis, max_eigenphase,
+                   expect)
 from htdse.core.plotting import plot_populations, plot_matrix
 from htdse.submodules.spin import (sigma_x, sigma_y, sigma_z, I2, sigma_plus,
                                    sigma_minus, pauli_term, pauli_sum)
@@ -760,6 +761,15 @@ print("== bra, hc, show, plot_matrix ==")
 _psi00 = otimes(ket("0"), ket("0"))
 check("bra('00') @ psi == <00|psi>", bra("00") @ _psi00 == 1.0 + 0j)
 check("bra('01') @ psi == 0", bra("01") @ _psi00 == 0j)
+
+_Z = np.diag([1.0, -1.0]).astype(complex)
+check("expect(ket, Z) == <psi|Z|psi>", abs(expect(ket("0"), _Z) - 1.0) < 1e-12)
+check("expect(ket, Z) == -1 on |1>", abs(expect(ket("1"), _Z) - (-1.0)) < 1e-12)
+_rho_mixed = np.diag([0.7, 0.3]).astype(complex)
+check("expect(rho, Z) == Tr(Z rho)",
+      abs(expect(_rho_mixed, _Z) - (0.7 - 0.3)) < 1e-12)
+check("expect(ket, Z) == expect(|psi><psi|, Z) for the same pure state",
+      abs(expect(ket("0"), _Z) - expect(np.outer(ket("0"), ket("0").conj()), _Z)) < 1e-12)
 
 _jc_term = term({"spin": sigma_plus, "mode": creation(6).conj().T}, coeff=0.1, name="jc")
 _h1 = _jc_term + hc(_jc_term)
