@@ -47,8 +47,15 @@ def pauli_term(spec: str, coeff=1.0, name=None, n_qubits=None,
         ops[key] = ops[key] @ PAULIS[p] if key in ops else PAULIS[p]
     h = term(ops, coeff=coeff, name=name, frame=frame)
     if n_qubits is not None:
-        # widen the registry with untouched qubits (identity there)
-        h = h + Model({f"{prefix}{i}": 2 for i in range(n_qubits)})
+        # Seed the registry with the FULL q0..q{n-1} order first, then add h
+        # onto it -- `+` preserves the LEFT operand's registry order and only
+        # appends keys the left side doesn't already have, so widening by
+        # `h + seed` (seed on the right) puts h's own touched qubits first and
+        # the untouched ones wherever they land after that -- e.g. "Z2" would
+        # register (q2, q0, q1) instead of (q0, q1, q2), silently swapping
+        # which physical qubit occupies which tensor slot. Seeding first keeps
+        # the natural q0..q{n-1} order regardless of which qubits `spec` touches.
+        h = Model({f"{prefix}{i}": 2 for i in range(n_qubits)}) + h
     return h
 
 

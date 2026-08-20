@@ -319,6 +319,17 @@ check("pauli_sum parses and materializes", np.allclose(hp.hamiltonian(0), expect
 check("pauli_term product on one qubit",
       np.allclose(pauli_term("X0Y0").hamiltonian(0), sigma_x @ sigma_y))
 
+# regression: pauli_term(..., n_qubits=) widening used to APPEND the seed registry
+# (h + seed), so a term touching a high qubit index came back with that qubit's
+# slot FIRST -- "Z2" registered as (q2, q0, q1) instead of (q0, q1, q2), silently
+# putting sigma_z on the wrong tensor factor. Seeding first (seed + h) fixes it.
+hz2 = pauli_term("Z2", n_qubits=3)
+check("pauli_term(n_qubits=) registers q0..q{n-1} in order regardless of spec",
+      list(hz2.subsystems.keys()) == ["q0", "q1", "q2"])
+check("pauli_term(n_qubits=) puts the operator on the RIGHT tensor factor",
+      np.allclose(np.asarray(hz2.hamiltonian(0)),
+                  np.kron(I2, np.kron(I2, sigma_z))))
+
 with quiet():
     F = compare_over(np.linspace(0, np.pi, 9),
                      HamiltonianEvolution(RabiDrive(1.0), ket("0")),
