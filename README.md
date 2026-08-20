@@ -211,13 +211,11 @@ system mutated after binding. Population reaching the top of a truncated ladder 
 
 | You want | Go to |
 |---|---|
-| To run your first simulation, step by step | [GUIDE.md](GUIDE.md) |
-| A one-screen reference while writing code | [CHEATSHEET.md](CHEATSHEET.md) |
+| The five-step workflow, and a reference while writing code | [GUIDE.md](GUIDE.md) |
 | The physics and numerics under the hood | [PHYSICS.md](PHYSICS.md) |
 | Worked examples, increasing complexity | [demos/](demos/) |
 | To use QuTiP for part of the job | `htdse.interop.qutip` — [GUIDE.md](GUIDE.md#talking-to-qutip) |
 | What a function does exactly | its docstring — written as the reference manual |
-| To update code written against an older version | [MIGRATION.md](MIGRATION.md) |
 
 **Package layout**
 
@@ -225,10 +223,12 @@ system mutated after binding. Population reaching the top of a truncated ladder 
 src/htdse/
   core/            # System protocol, terms (composable Models), the four evolution
                    # classes, embed/partial_trace, compare_over, converged,
-                   # truncation guard, plotting
+                   # truncation guard, plotting, the READ layer (project/closure/
+                   # generator/paulis/max_eigenphase/show/expect)
   interop/         # optional bridges (qutip), imported lazily, never a dependency
-  submodules/      # reusable physics: spin, harmonic_oscillator, trotter,
-                   # molmer_sorensen (MS gate suite), wigner
+  submodules/      # reusable physics: spin, harmonic_oscillator, trotter, wigner,
+                   # spin_boson (general tone/mode drive), trapped_ion (IonChain),
+                   # molmer_sorensen (MS gate recipes on top of spin_boson)
   magnus.py        # magnus / magnus_pauli: what a pulse effectively generates
   util.py          # otimes, ket, fidelity, sampled_pulse, ...
 demos/             # worked notebooks (start at 00)

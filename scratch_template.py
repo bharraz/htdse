@@ -2,7 +2,7 @@
 Delete what you don't need; the point is not re-deriving the import list and
 the "how do I even look at the answer" boilerplate every time.
 
-See CHEATSHEET.md for the one-screen reference this is built from.
+See GUIDE.md for the reference this is built from.
 """
 import numpy as np
 import htdse as ht
@@ -16,7 +16,7 @@ Omega = 0.2          # drive amplitude
 T = np.pi / Omega    # e.g. a pi-pulse time
 
 # ---------------------------------------------------------------------------
-# BUILD -- a Model from named terms (see CHEATSHEET.md "Defining a Hamiltonian")
+# BUILD -- a Model from named terms (see GUIDE.md Step 1, "compose the target")
 # ---------------------------------------------------------------------------
 H = (ht.term(0.5 * w0 * sigma_z, on="q", name="atom")
    + ht.term(0.5 * Omega * sigma_x, on="q", name="drive"))
@@ -24,8 +24,8 @@ H = (ht.term(0.5 * w0 * sigma_z, on="q", name="atom")
 ht.show(H)   # sanity check before running anything: is this the H you meant?
 
 # ---------------------------------------------------------------------------
-# RUN -- pick the class matching your equation of motion (see CHEATSHEET.md
-# "Choosing an evolution"): HamiltonianEvolution / UnitaryEvolution /
+# RUN -- pick the class matching your equation of motion (see GUIDE.md Step 3,
+# "evolve"): HamiltonianEvolution / UnitaryEvolution /
 # DensityMatrixEvolution / LindbladEvolution
 # ---------------------------------------------------------------------------
 psi0 = ht.ket("0")
