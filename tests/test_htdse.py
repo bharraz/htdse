@@ -826,4 +826,46 @@ try:
 except KeyError:
     check("project rejects an unknown subsystem name", True)
 
+print("== truncation_populations: correct subsystem attribution (previously untested) ==")
+from htdse.core.truncation import truncation_populations
+
+_subs3 = {"q0": 2, "modeA": 4, "modeB": 3}
+_dim3 = 2 * 4 * 3
+_psi_a = np.zeros(_dim3, dtype=complex)
+_psi_a[0 * 12 + 3 * 3 + 0] = 1.0   # q0=0, modeA=3 (top), modeB=0
+_pop_a = truncation_populations(_psi_a, _subs3, "ket")
+check("population at modeA's ceiling is attributed to modeA, not modeB",
+      abs(_pop_a.get("modeA", 0) - 1.0) < 1e-12 and _pop_a.get("modeB", 0.0) < 1e-12)
+
+_psi_b = np.zeros(_dim3, dtype=complex)
+_psi_b[1 * 12 + 2 * 3 + 2] = 1.0   # q0=1, modeA=2, modeB=2 (top, last factor)
+_pop_b = truncation_populations(_psi_b, _subs3, "ket")
+check("population at modeB's ceiling (last factor) is attributed to modeB",
+      abs(_pop_b.get("modeB", 0) - 1.0) < 1e-12 and _pop_b.get("modeA", 0.0) < 1e-12)
+
+_pop_batch = truncation_populations(np.stack([_psi_a, _psi_b]), _subs3, "ket")
+check("batched truncation_populations takes the worst case over time",
+      abs(_pop_batch["modeA"] - 1.0) < 1e-12 and abs(_pop_batch["modeB"] - 1.0) < 1e-12)
+
+print("== wigner: normalization and known Fock-state values (previously untested) ==")
+from htdse.submodules.wigner import wigner
+
+_n_max = 8
+_fock0 = np.zeros(_n_max + 1, dtype=complex); _fock0[0] = 1.0
+_fock1 = np.zeros(_n_max + 1, dtype=complex); _fock1[1] = 1.0
+_xs = np.linspace(-5, 5, 201)
+_ps = np.linspace(-5, 5, 201)
+_dxdp = (_xs[1] - _xs[0]) * (_ps[1] - _ps[0])
+_W0 = wigner(_fock0, _xs, _ps)
+_W1 = wigner(_fock1, _xs, _ps)
+check("vacuum Wigner peak == 1/pi", abs(_W0.max() - 1 / np.pi) < 1e-9)
+check("vacuum Wigner integrates to 1", abs(_W0.sum() * _dxdp - 1.0) < 1e-6)
+check("|1> Wigner is negative at the origin (== -1/pi, nonclassicality)",
+      abs(_W1[100, 100] - (-1 / np.pi)) < 1e-9)
+check("wigner(ket) == wigner(outer(ket,ket)) -- ket and rho inputs agree",
+      np.allclose(_W1, wigner(np.outer(_fock1, _fock1.conj()), _xs, _ps)))
+_rho_mix = 0.5 * np.outer(_fock0, _fock0.conj()) + 0.5 * np.outer(_fock1, _fock1.conj())
+check("wigner is linear in rho (mixed state == average of components)",
+      np.allclose(wigner(_rho_mix, _xs, _ps), 0.5 * _W0 + 0.5 * _W1))
+
 print(f"\nALL {len(PASS)} CHECKS PASSED")
