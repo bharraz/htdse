@@ -24,7 +24,8 @@ from .core.subsystems import embed, partial_trace
 from .core.compare import compare_over
 from .core.convergence import converged
 from .core.read import show, project, closure, generator, paulis, max_eigenphase, expect
-from .core.plotting import plot_populations, plot_eigenspectrum, plot_matrix
+from .core.plotting import (plot_populations, plot_eigenspectrum, plot_matrix,
+                            plot_phases, plot_adiabatic_populations)
 from .magnus import magnus, magnus_pauli, pauli_decompose
 from .util import (MAG_THRESHOLD, dag, otimes, ket, bra, projector, fidelity,
                    process_fidelity, density_fidelity, relative_phase,
@@ -60,6 +61,7 @@ __all__ = [
     "binary_to_index", "index_to_binary", "sampled_pulse",
     "show", "project", "closure", "generator", "paulis", "max_eigenphase", "expect",
     "plot_populations", "plot_eigenspectrum", "plot_matrix",
+    "plot_phases", "plot_adiabatic_populations",
     # submodules, reachable by name
     "spin", "harmonic_oscillator", "spin_boson", "trapped_ion",
     "molmer_sorensen", "trotter", "wigner",

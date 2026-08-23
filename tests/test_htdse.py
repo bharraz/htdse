@@ -19,7 +19,8 @@ from htdse import (System, Model, term, jump, plus_hc, hc,
                    otimes, ket, bra, fidelity, process_fidelity, density_fidelity, quiet, dag,
                    SparseSuggestion, show, project, closure, generator, paulis, max_eigenphase,
                    expect)
-from htdse.core.plotting import plot_populations, plot_matrix
+from htdse.core.plotting import (plot_populations, plot_matrix,
+                                 plot_phases, plot_adiabatic_populations)
 from htdse.submodules.spin import (sigma_x, sigma_y, sigma_z, I2, sigma_plus,
                                    sigma_minus, pauli_term, pauli_sum)
 from htdse.submodules.harmonic_oscillator import (annihilation, creation,
@@ -352,11 +353,27 @@ with quiet():
     ax2 = plot_populations(ts[:10], np.asarray(ev.trace_out("mode", t=ts[:10])))  # rho trajectory
 check("plot_populations accepts evolution and rho trajectory", ax is not None and ax2 is not None)
 
+with quiet():
+    psis = ev.state_at(ts[:10])
+    ax3 = plot_phases(ts[:10], ev)  # evolution object accepted directly
+    ax4 = plot_phases(ts[:10], psis)  # ket trajectory
+    phase_err = False
+    try:
+        plot_phases(ts[:10], np.asarray(ev.trace_out("mode", t=ts[:10])))  # rho -> must reject
+    except ValueError:
+        phase_err = True
+check("plot_phases accepts evolution/ket trajectory, rejects density matrix",
+      ax3 is not None and ax4 is not None and phase_err)
+
 # vectorized adiabatic diagnostics
 with quiet():
     ad = HamiltonianEvolution(Ramp(T), np.asarray(np.linalg.eigh(np.asarray(sigma_x))[1][:, 0]))
     af = ad.adiabatic_fidelity(np.linspace(0.1, T, 5))
 check("vectorized adiabatic_fidelity", af.shape == (5,) and np.all(af > 0.5))
+
+with quiet():
+    ax5 = plot_adiabatic_populations(ad, np.linspace(0.1, T, 5))
+check("plot_adiabatic_populations runs", ax5 is not None)
 
 # quiet() actually silences
 buf = io.StringIO()

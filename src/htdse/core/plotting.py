@@ -43,6 +43,48 @@ def plot_populations(ts, states, labels=None, ax=None):
     return ax
 
 
+def plot_phases(ts, states, labels=None, ax=None):
+    """Phase arg(<i|psi(t)>) of each computational basis amplitude vs t.
+
+    `states` may be:
+      - an evolution object (anything with `.state_at`) -- sampled at `ts`;
+      - a ket trajectory, shape (n_times, dim).
+
+    Density matrices have no well-defined per-basis-state phase (a global
+    phase on |psi> is unobservable, but rho's diagonal fixes populations
+    only) -- pass a ket trajectory or an evolution whose `.state_at` returns
+    kets. Phase is masked (not drawn) wherever the amplitude is numerically
+    zero, since arg(0) is meaningless noise rather than a real value.
+
+    Dimension/system-agnostic. `labels`: as in `plot_populations`.
+    """
+    if hasattr(states, "state_at"):
+        states = states.state_at(ts)
+    states = np.asarray(states)
+    if states.ndim != 2:
+        raise ValueError(f"plot_phases needs a ket trajectory (n_times, dim), got shape {states.shape}")
+    n_times, dim = states.shape
+    if labels is None:
+        n_bits = round(np.log2(dim))
+        if 2 ** n_bits == dim:
+            labels = [index_to_binary(i, n_bits) for i in range(dim)]
+        else:
+            labels = [str(i) for i in range(dim)]
+
+    thresh = 1e-10 * (np.max(np.abs(states)) or 1.0)
+    phases = np.where(np.abs(states) > thresh, np.angle(states), np.nan)
+
+    if ax is None:
+        _, ax = plt.subplots()
+    for i in range(dim):
+        ax.plot(ts, phases[:, i], label=f"|{labels[i]}>")
+    ax.set_xlabel("t")
+    ax.set_ylabel("phase (rad)")
+    ax.set_ylim(-np.pi - 0.1, np.pi + 0.1)
+    ax.legend()
+    return ax
+
+
 def plot_matrix(M, t=0.0, kind="abs", ax=None):
     """Heatmap of an operator -- the "what does this actually look like"
     sanity check for a Hamiltonian or a gate, before or instead of solving
@@ -97,5 +139,27 @@ def plot_eigenspectrum(evolution, ts, ax=None):
         ax.plot(ts, spectra[:, n], label=f"level {n}")
     ax.set_xlabel("t")
     ax.set_ylabel("instantaneous eigenvalue")
+    ax.legend()
+    return ax
+
+
+def plot_adiabatic_populations(evolution, ts, ax=None):
+    """Population in each instantaneous eigenstate of H(t) vs t:
+    |<n(t)|psi(t)>|^2, one line per level, ordered by ascending E_n(t).
+
+    `evolution`: a HamiltonianEvolution (uses its `adiabatic_populations`).
+    Same caveat as `plot_eigenspectrum`: level identity can jump at a
+    (near-)degeneracy crossing.
+    """
+    ts = np.asarray(ts)
+    pops = evolution.adiabatic_populations(ts)
+
+    if ax is None:
+        _, ax = plt.subplots()
+    for n in range(pops.shape[1]):
+        ax.plot(ts, pops[:, n], label=f"level {n}")
+    ax.set_xlabel("t")
+    ax.set_ylabel("adiabatic population")
+    ax.set_ylim(-0.02, 1.02)
     ax.legend()
     return ax
