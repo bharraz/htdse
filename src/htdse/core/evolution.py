@@ -78,20 +78,25 @@ def _check_density_matrix(rho, what="rho0"):
                       "make sure that's intentional.", stacklevel=3)
 
 
-def _reject_dissipative(system, t0, cls_name, alternative="LindbladEvolution"):
-    """Closed-system evolutions silently IGNORE jump operators -- so refuse a
-    dissipative system outright instead of producing wrong physics.
-
-    Sampling `jump_operators(t0)` alone would miss a channel that switches on at
-    t > t0 (a time-dependent coefficient vanishing at t0). A term-layer
-    Model declares its channels structurally, so check that registry when
-    it exists; for a hand-written System, sampling at t0 is all we have."""
+def _is_dissipative(system, t0) -> bool:
+    """Whether `system` carries jump operators at (or structurally, regardless
+    of) `t0`. Sampling `jump_operators(t0)` alone would miss a channel that
+    switches on at t > t0 (a time-dependent coefficient vanishing at t0). A
+    term-layer Model declares its channels structurally, so check that
+    registry when it exists; for a hand-written System, sampling at t0 is
+    all we have."""
     structural = getattr(system, "jumps", None)
     dissipative = bool(structural) if isinstance(structural, dict) else False
     if not dissipative:
         jumps = getattr(system, "jump_operators", None)
         dissipative = callable(jumps) and len(jumps(t0)) > 0
-    if dissipative:
+    return dissipative
+
+
+def _reject_dissipative(system, t0, cls_name, alternative="LindbladEvolution"):
+    """Closed-system evolutions silently IGNORE jump operators -- so refuse a
+    dissipative system outright instead of producing wrong physics."""
+    if _is_dissipative(system, t0):
         raise ValueError(
             f"{cls_name} solves closed-system dynamics, but {type(system).__name__} "
             f"has jump operators -- its dissipation would be silently ignored. "
@@ -750,3 +755,48 @@ class LindbladEvolution(_Reportable):
         from .subsystems import partial_trace
         rho = self.state_at(t)
         return partial_trace(rho, self.subsystems, names)
+
+
+# ---------------------------------------------------------------------------
+# facade -- the one-call shortcut, for when you just want the answer
+# ---------------------------------------------------------------------------
+
+def evolve(system, initial, t, t0: float = 0.0, **kwargs):
+    """Solve the equation of motion matching `initial`, and hand back
+    `state_at(t)` directly -- no Evolution object to construct or query.
+
+    `initial` a ket (1-D) -> HamiltonianEvolution; a density matrix (2-D) ->
+    DensityMatrixEvolution, or LindbladEvolution if `system` carries jump
+    operators (dissipation needs a mixed state -- a ket with a dissipative
+    system raises rather than silently ignoring the dissipation, same rule
+    the classes themselves enforce).
+
+    Extra keyword arguments (`rtol=`, `atol=`, `method=`, `verbose=`,
+    `subsystems=`, `truncation=`, ...) pass straight through to whichever
+    class gets picked. This is the shortcut for a one-shot number; reach for
+    the class directly when you need `report()`, `trace_out()`, or repeated
+    queries without re-solving.
+    """
+    arr = np.asarray(initial)
+    if arr.ndim == 1:
+        if _is_dissipative(system, t0):
+            raise ValueError(
+                "evolve(): system has jump operators, but `initial` is a ket -- "
+                "dissipation needs a mixed state. Pass a density matrix (e.g. "
+                "np.outer(psi, psi.conj())) so this routes to LindbladEvolution.")
+        ev = HamiltonianEvolution(system, initial, t0=t0, **kwargs)
+    elif arr.ndim == 2:
+        cls = LindbladEvolution if _is_dissipative(system, t0) else DensityMatrixEvolution
+        ev = cls(system, initial, t0=t0, **kwargs)
+    else:
+        raise ValueError(f"evolve() needs a ket (d,) or density matrix (d,d), "
+                         f"got shape {arr.shape}")
+    return ev.state_at(t)
+
+
+def propagator(system, dim, t, t0: float = 0.0, **kwargs):
+    """`UnitaryEvolution(system, dim=dim, t0=t0, **kwargs).unitary_at(t)` in
+    one call -- the propagator shortcut alongside `evolve()`. `dim` is
+    unused (and may be omitted) when `system` provides its own analytic
+    `.unitary(t)`, exactly as for `UnitaryEvolution` itself."""
+    return UnitaryEvolution(system, dim=dim, t0=t0, **kwargs).unitary_at(t)

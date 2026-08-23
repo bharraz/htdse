@@ -15,7 +15,7 @@ matplotlib.use("Agg")
 import htdse as ht
 from htdse import (System, Model, term, jump, plus_hc, hc,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
-                   LindbladEvolution, embed, partial_trace, compare_over,
+                   LindbladEvolution, evolve, propagator, embed, partial_trace, compare_over,
                    otimes, ket, bra, fidelity, process_fidelity, density_fidelity, quiet, dag,
                    SparseSuggestion, show, project, closure, generator, paulis, max_eigenphase,
                    expect)
@@ -867,5 +867,60 @@ check("wigner(ket) == wigner(outer(ket,ket)) -- ket and rho inputs agree",
 _rho_mix = 0.5 * np.outer(_fock0, _fock0.conj()) + 0.5 * np.outer(_fock1, _fock1.conj())
 check("wigner is linear in rho (mixed state == average of components)",
       np.allclose(wigner(_rho_mix, _xs, _ps), 0.5 * _W0 + 0.5 * _W1))
+
+print("== evolve()/propagator(): one-call facade over the Evolution classes ==")
+_Hf = term(0.5 * sigma_x, on="q")
+with quiet():
+    _psi_facade = evolve(_Hf, ket("0"), np.pi)
+    _ev_ref = HamiltonianEvolution(_Hf, ket("0"))
+    _psi_ref = _ev_ref.state_at(np.pi)
+check("evolve() on a ket matches HamiltonianEvolution.state_at", np.allclose(_psi_facade, _psi_ref))
+
+with quiet():
+    _U_facade = propagator(_Hf, 2, np.pi)
+    _U_ref = UnitaryEvolution(_Hf, dim=2).unitary_at(np.pi)
+check("propagator() matches UnitaryEvolution.unitary_at", np.allclose(_U_facade, _U_ref))
+
+_rho0f = np.outer(ket("0"), ket("0").conj())
+with quiet():
+    _rho_facade = evolve(_Hf, _rho0f, np.pi)
+    _rho_ref = DensityMatrixEvolution(_Hf, _rho0f).state_at(np.pi)
+check("evolve() on a density matrix (closed system) matches DensityMatrixEvolution",
+      np.allclose(_rho_facade, _rho_ref))
+
+_Hopen = _Hf + jump(sigma_minus, on="q", coeff=0.1, name="decay")
+with quiet():
+    _rho_open_facade = evolve(_Hopen, _rho0f, 5.0)
+    _rho_open_ref = LindbladEvolution(_Hopen, _rho0f).state_at(5.0)
+check("evolve() on a dissipative system routes to LindbladEvolution",
+      np.allclose(_rho_open_facade, _rho_open_ref))
+
+try:
+    evolve(_Hopen, ket("0"), 5.0)
+    check("evolve() refuses a ket against a dissipative system", False)
+except ValueError as e:
+    check("evolve() refuses a ket against a dissipative system", "dissipation" in str(e))
+
+try:
+    evolve(_Hf, np.zeros((2, 2, 2)), 1.0)
+    check("evolve() rejects a bad-shaped initial state", False)
+except ValueError as e:
+    check("evolve() rejects a bad-shaped initial state", "ket" in str(e))
+
+print(f"\nALL {len(PASS)} CHECKS PASSED")
+
+print("== import structure: the physics vocabulary is reachable from the top ==")
+_flat_names = ["sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus", "I2",
+              "pauli_term", "pauli_sum", "annihilation", "creation", "number_operator",
+              "fock", "thermal", "Tone", "Mode", "driven_spins", "jaynes_cummings",
+              "exact_drive", "rabi", "IonChain", "ms_tones", "ms_closed_form",
+              "ideal_gate", "TrotterizedSystem", "evolve", "propagator"]
+check("physics vocabulary is flattened onto `htdse`", all(hasattr(ht, n) for n in _flat_names))
+_submodule_names = ["spin", "harmonic_oscillator", "spin_boson", "trapped_ion",
+                    "molmer_sorensen", "trotter", "wigner"]
+check("every submodule is reachable by name from `htdse`",
+      all(hasattr(ht, n) for n in _submodule_names))
+check("`htdse.wigner` is the MODULE, not the function (no name collision)",
+      not callable(ht.wigner) and callable(ht.wigner.wigner))
 
 print(f"\nALL {len(PASS)} CHECKS PASSED")
