@@ -14,6 +14,19 @@ It composes Hamiltonians from *named* pieces, so building a variant of a model (
 error term, a swapped drive, a different approximation) is a one-line edit rather than a
 rewrite. Comparing the variant to the original is what most of the package is for.
 
+## Physics covered
+
+| Platform | Submodules | Demo |
+|---|---|---|
+| Trapped ions | `spin_boson`, `trapped_ion`, `molmer_sorensen`, `trap` (sideband/thermal physics) | [demos/05](demos/05_ms_two_qubit_gate.ipynb), [demos/07](demos/07_yb171_hyperfine_and_sidebands.ipynb) |
+| Atomic structure (hyperfine, Zeeman, dipole coupling) | `atomic`, `angular_momentum` | [demos/07](demos/07_yb171_hyperfine_and_sidebands.ipynb) |
+| Cavity/circuit QED | `spin_boson` (`jaynes_cummings`, `rabi`) | [demos/01](demos/01_jaynes_cummings_composition.ipynb) |
+| Optical tweezer arrays (Rydberg blockade) | `rydberg` | [demos/09](demos/09_rydberg_blockade.ipynb) |
+| NV centers (spin-1 ground state) | `spin_j`, `nv_center` | [demos/08](demos/08_nv_center_ground_state.ipynb) |
+
+All of it sits on the same generic engine below — a new platform is a new submodule, not a
+fork of the solver.
+
 ## Install
 
 ```
@@ -228,9 +241,24 @@ src/htdse/
   interop/         # optional bridges (qutip), imported lazily, never a dependency
   submodules/      # reusable physics: spin, harmonic_oscillator, trotter, wigner,
                    # spin_boson (general tone/mode drive), trapped_ion (IonChain),
-                   # molmer_sorensen (MS gate recipes on top of spin_boson)
+                   # molmer_sorensen (MS gate recipes on top of spin_boson),
+                   # angular_momentum (Clebsch-Gordan/Wigner-6j), trap (Lamb-Dicke
+                   # sideband physics), atomic (hyperfine/Zeeman/dipole structure),
+                   # spin_j (general spin-J operators), nv_center (NV ground-state
+                   # physics), rydberg (tweezer-array Rydberg interactions)
   magnus.py        # magnus / magnus_pauli: what a pulse effectively generates
   util.py          # otimes, ket, fidelity, sampled_pulse, ...
 demos/             # worked notebooks (start at 00)
 tests/             # python tests/test_htdse.py ; python tests/test_molmer_sorensen.py
 ```
+
+## Acknowledgments
+
+`angular_momentum.py`'s Wigner-6j/Clebsch-Gordan implementation, and the
+sideband/thermal-flopping formulas in `trap.py` and the
+hyperfine/Zeeman/dipole matrix builders in `atomic.py`, are ported from
+[AMO.jl](https://github.com/yuyichao/AMO.jl), a Julia package by Yichao Yu.
+See those modules' docstrings for what was ported directly versus
+re-derived, and the differences (dropped Julia-performance machinery, a
+from-scratch Clebsch-Gordan/Wigner-6j replacing AMO.jl's dependency on the
+external `WignerSymbols.jl` package) from the original.

@@ -16,6 +16,7 @@ import numpy as np
 
 from .harmonic_oscillator import thermal
 from .spin_boson import Mode, driven_spins
+from . import trap as _trap
 
 
 class IonChain:
@@ -64,6 +65,25 @@ class IonChain:
         for nb, md in zip(nbars[1:], self.modes[1:]):
             rho = np.kron(rho, thermal(float(nb), md.n_max))
         return rho
+
+    def _mode(self, mode_name):
+        for md in self.modes:
+            if md.name == mode_name:
+                return md
+        raise KeyError(f"IonChain has no mode named {mode_name!r}; "
+                       f"known modes: {[md.name for md in self.modes]}")
+
+    def sideband_coupling(self, mode_name, n1, n2, phase=True):
+        """<n1|exp(i eta (a+a^dagger))|n2> for the named mode's own eta --
+        a thin pass-through to `trap.sideband` so callers don't have to pull
+        `mode.eta` out by hand."""
+        return _trap.sideband(n1, n2, self._mode(mode_name).eta, phase=phase)
+
+    def thermal_sideband(self, mode_name, delta_n, t, nbar, thresh=1e-3):
+        """Thermally-averaged sideband Rabi flopping probability on the
+        named mode's delta_n-th sideband -- a thin pass-through to
+        `trap.thermal_sideband` using the mode's own eta."""
+        return _trap.thermal_sideband(nbar, delta_n, self._mode(mode_name).eta, t, thresh=thresh)
 
     def __repr__(self):
         modes = ", ".join(f"{md.name}(n_max={md.n_max})" for md in self.modes)
