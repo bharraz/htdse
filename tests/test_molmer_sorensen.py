@@ -264,4 +264,31 @@ check("sparse exact_drive matches dense",
 check("explain() runs and TONE_TABLE is non-empty", len(TONE_TABLE) > 0)
 explain()
 
+print("== chirped tones: Tone(offset=callable) ==")
+from htdse.submodules.spin_boson import exact_drive as _exact_drive_chirp
+_mu_val = -nu + 0.3
+for _ld in [1, 2]:
+    _H_scalar = driven_spins([Tone(offset=_mu_val, amp=0.8, phase=0.1)], ["q0"], [mode1q], lamb_dicke=_ld)
+    _H_callable = driven_spins([Tone(offset=lambda t: _mu_val, amp=0.8, phase=0.1)], ["q0"], [mode1q], lamb_dicke=_ld)
+    for _tt in [0.0, 0.3, 1.7]:
+        check(f"constant-wrapped-as-callable offset == scalar offset (lamb_dicke={_ld}, t={_tt})",
+              np.allclose(np.asarray(_H_scalar.hamiltonian(_tt)),
+                          np.asarray(_H_callable.hamiltonian(_tt)), atol=1e-8))
+_ex_scalar = _exact_drive_chirp([Tone(offset=_mu_val)], ["q0"], [mode1q])
+_ex_callable = _exact_drive_chirp([Tone(offset=lambda t: _mu_val)], ["q0"], [mode1q])
+check("exact_drive: constant-wrapped-as-callable offset == scalar offset",
+      np.allclose(_ex_scalar.hamiltonian(0.5), _ex_callable.hamiltonian(0.5), atol=1e-8))
+try:
+    driven_spins([Tone(offset=lambda t: _mu_val)], ["q0"], [mode1q], lamb_dicke=1, rwa=True)
+    check("rwa=True refuses a callable (chirped) offset", False)
+except ValueError as e:
+    check("rwa=True refuses a callable (chirped) offset", "chirp" in str(e))
+
+from htdse.submodules.spin_boson import _phase_of
+_mu0, _rate = 1.5, 0.7
+_Phi = _phase_of(lambda t: _mu0 + _rate * t)
+for _tt in [0.0, 0.5, 2.0]:
+    check(f"chirp Phi(t) matches the analytic integral at t={_tt}",
+          abs(_Phi(_tt) - (_mu0 * _tt + 0.5 * _rate * _tt ** 2)) < 1e-8)
+
 print(f"\nALL {len(PASS)} SPIN-BOSON/MS CHECKS PASSED")

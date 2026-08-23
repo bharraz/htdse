@@ -113,6 +113,14 @@ class Tone(NamedTuple):
             tone (sign=-1) -- s+ e^{+i(mu t - phi)} + h.c. is identically
             s+ e^{-i((-mu) t + phi)} + h.c., so the sign of `offset` alone
             carries that distinction; there is no separate flag.
+            May also be callable, mu(t) -- an instantaneous (chirped)
+            detuning -- at `rwa=False` only: RWA's "keep whichever sideband
+            is nearest resonance" has no answer when the detuning itself
+            moves, so `rwa=True` with a callable offset raises. The phase
+            that appears everywhere `mu t` would is then the accumulated
+            phase int_0^t mu(t') dt', found by quadrature (see `_phase_of`) --
+            a real cost per RHS evaluation, unlike the free `mu*t` a constant
+            offset gets, so only pay it when you need a genuine chirp.
     amp:    scalar, callable f(t), or a per-spin sequence of either.
     phase:  scalar, callable f(t), or a per-spin sequence of either.
     """
@@ -210,6 +218,24 @@ def _memo1(fn):
     return g
 
 
+def _phase_of(mu):
+    """mu (a tone's offset: a constant, or a callable instantaneous detuning
+    mu(t)) -> Phi(t), the phase that belongs where `mu * t` would go: the
+    accumulated phase int_0^t mu(t') dt'.
+
+    Constant mu: Phi(t) = mu*t exactly, no integration -- the common case
+    stays free. Callable mu: Phi(t) is found by quadrature from 0 to t,
+    fresh on every call -- the real cost of a genuinely time-dependent
+    detuning; a memo would help only for a monotonically-advancing solve,
+    which an adaptive stepper's stage evaluations don't guarantee."""
+    if callable(mu):
+        from scipy.integrate import quad
+        def Phi(t):
+            return quad(mu, 0.0, t)[0] if t != 0.0 else 0.0
+        return Phi
+    return lambda t, mu=mu: mu * t
+
+
 def _norm_mode(md: Mode, n_spins: int) -> Mode:
     eta = np.broadcast_to(np.asarray(md.eta, dtype=float), (n_spins,)).copy()
     return Mode(float(md.nu), eta, int(md.n_max), str(md.name))
@@ -228,6 +254,13 @@ def _tone_group(H, q, j, modes, ops, mu, amp_fn, phase_fn, lamb_dicke, rwa, tag)
             raise ValueError("rwa=True is only defined at lamb_dicke=1 -- the "
                              "eta^2 terms are all fast-rotating and have no "
                              "resonant piece to keep")
+        if callable(mu):
+            raise ValueError(
+                "rwa=True needs a constant Tone.offset -- 'keep whichever "
+                "sideband is nearest resonance' has no fixed answer when the "
+                "detuning itself is time-dependent (a chirp can sweep through "
+                "several). Use rwa=False (pre-RWA, lamb_dicke=1 or 2) for a "
+                "chirped tone.")
         if mu == 0:
             # on resonance: no motional sideband is near resonance either, so
             # the only surviving piece is the bare carrier.
@@ -267,36 +300,37 @@ def _tone_group(H, q, j, modes, ops, mu, amp_fn, phase_fn, lamb_dicke, rwa, tag)
         return H
 
     # ---- pre-RWA: carrier + eta^lamb_dicke ----
-    def cx(t, mu=mu, amp_fn=amp_fn, phase_fn=phase_fn):
-        return (amp_fn(t) / 2) * math.cos(mu * t + phase_fn(t))
-    def cy(t, mu=mu, amp_fn=amp_fn, phase_fn=phase_fn):
-        return (amp_fn(t) / 2) * math.sin(mu * t + phase_fn(t))
+    Phi = _phase_of(mu)   # Phi(t) = mu*t for a constant mu; a chirp otherwise
+    def cx(t, Phi=Phi, amp_fn=amp_fn, phase_fn=phase_fn):
+        return (amp_fn(t) / 2) * math.cos(Phi(t) + phase_fn(t))
+    def cy(t, Phi=Phi, amp_fn=amp_fn, phase_fn=phase_fn):
+        return (amp_fn(t) / 2) * math.sin(Phi(t) + phase_fn(t))
     H = H + term(sigma_x, on=q, coeff=cx, name=f"carrier_{q}_{tag}") \
           + term(sigma_y, on=q, coeff=cy, name=f"carrier_{q}_{tag}")
 
     for md in modes:
         a, adag = ops[md.name]
         e_jm, nu_m = md.eta[j], md.nu
-        def gx(t, mu=mu, e=e_jm, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
+        def gx(t, Phi=Phi, e=e_jm, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
             return -(e / 2) * amp_fn(t) * cmath.exp(1j * nu_m * t) \
-                   * math.cos(mu * t + phase_fn(t) + math.pi / 2)
-        def gy(t, mu=mu, e=e_jm, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
+                   * math.cos(Phi(t) + phase_fn(t) + math.pi / 2)
+        def gy(t, Phi=Phi, e=e_jm, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
             return -(e / 2) * amp_fn(t) * cmath.exp(1j * nu_m * t) \
-                   * math.sin(mu * t + phase_fn(t) + math.pi / 2)
+                   * math.sin(Phi(t) + phase_fn(t) + math.pi / 2)
         sdf = f"sdf_{q}_{md.name}_{tag}"
         H = H + plus_hc(term({q: sigma_x, md.name: adag}, coeff=gx, name=sdf)
                       + term({q: sigma_y, md.name: adag}, coeff=gy, name=sdf))
         if lamb_dicke >= 2:
             n_op = adag @ a
             pref = -(e_jm ** 2) / 4
-            def h2x(t, mu=mu, pref=pref, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
-                return pref * amp_fn(t) * cmath.exp(2j * nu_m * t) * math.cos(mu * t + phase_fn(t))
-            def h2y(t, mu=mu, pref=pref, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
-                return pref * amp_fn(t) * cmath.exp(2j * nu_m * t) * math.sin(mu * t + phase_fn(t))
-            def h0x(t, mu=mu, pref=pref, amp_fn=amp_fn, phase_fn=phase_fn):
-                return pref * amp_fn(t) * math.cos(mu * t + phase_fn(t))
-            def h0y(t, mu=mu, pref=pref, amp_fn=amp_fn, phase_fn=phase_fn):
-                return pref * amp_fn(t) * math.sin(mu * t + phase_fn(t))
+            def h2x(t, Phi=Phi, pref=pref, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
+                return pref * amp_fn(t) * cmath.exp(2j * nu_m * t) * math.cos(Phi(t) + phase_fn(t))
+            def h2y(t, Phi=Phi, pref=pref, nu_m=nu_m, amp_fn=amp_fn, phase_fn=phase_fn):
+                return pref * amp_fn(t) * cmath.exp(2j * nu_m * t) * math.sin(Phi(t) + phase_fn(t))
+            def h0x(t, Phi=Phi, pref=pref, amp_fn=amp_fn, phase_fn=phase_fn):
+                return pref * amp_fn(t) * math.cos(Phi(t) + phase_fn(t))
+            def h0y(t, Phi=Phi, pref=pref, amp_fn=amp_fn, phase_fn=phase_fn):
+                return pref * amp_fn(t) * math.sin(Phi(t) + phase_fn(t))
             two_n_plus_1 = 2 * n_op + np.eye(md.n_max + 1)
             ld2 = f"ld2_{q}_{md.name}_{tag}"
             H = H + plus_hc(term({q: sigma_x, md.name: adag @ adag}, coeff=h2x, name=ld2)
@@ -428,11 +462,12 @@ def exact_drive(tones, spins, modes, sparse: bool = False) -> System:
             for k, tone in enumerate(tones):
                 amp_fns = _as_funcs(tone.amp, n, f"tones[{k}].amp")
                 phase_fns = _as_funcs(tone.phase, n, f"tones[{k}].phase")
+                Phi = _phase_of(tone.offset)
                 for j, q in enumerate(spins):
                     D = displacement(j, t)
                     if sparse and modes:
                         D = _sp.csr_matrix(D)
-                    coeff = (amp_fns[j](t) / 2) * cmath.exp(-1j * (tone.offset * t + phase_fns[j](t)))
+                    coeff = (amp_fns[j](t) / 2) * cmath.exp(-1j * (Phi(t) + phase_fns[j](t)))
                     Sp = embed(sp_local, self.subsystems, q)
                     Dfull = embed(D, self.subsystems, mode_names) if modes else eye_full
                     term_mat = coeff * (Sp @ Dfull)

@@ -107,6 +107,20 @@ math, which is what lets one `Mode` drive both this closed form and an ODE cross
 `ms_tones(nu, delta, amp, delta_red=..., amp_red=...)` supports an asymmetric bichromatic
 drive for `driven_spins`/ODE use; the closed form itself needs a symmetric `delta`.
 
+**Chirped tones** — `Tone(offset=...)` also accepts a callable, `mu(t)`, an instantaneous
+(time-dependent) detuning:
+
+```python
+chirp = lambda t: -nu + 0.2 + 0.05 * t          # detuning sweeping through resonance
+H_chirp = driven_spins([Tone(offset=chirp, amp=Omega)], ["q0"], [mode], lamb_dicke=1)
+```
+
+Only at `rwa=False` — RWA's "keep whichever sideband is nearest resonance" has no fixed
+answer once the detuning itself moves, so `rwa=True` with a callable `offset` raises.
+A constant offset stays free (`Phi(t) = mu*t`, no integration); a callable one is
+integrated by quadrature on every RHS evaluation, which is a real solver-speed cost —
+worth it only when you need a genuine chirp.
+
 **Physics that isn't a sum of terms — write a `System`:**
 
 ```python
