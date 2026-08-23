@@ -90,7 +90,7 @@ H_jc = driven_spins([Tone(offset=-nu)], ["q0"], [mode1], lamb_dicke=1, rwa=True)
 |---|---|---|
 | exact, no expansion (returns a `System`, not a `Model`) | `None` | `False` |
 | keep η¹ (spin-motion coupling) | `1` | `False` |
-| keep η¹+η² (adds Stark-shift-like term) | `2` | `False` |
+| keep η¹+η² (Stark-shift-like term, plus cross-mode coupling if >1 mode) | `2` | `False` |
 | resonant term only (JC / anti-JC / MS force) | `1` | `True` |
 
 `ideal_gate()` skips straight to the common Mølmer–Sørensen case:

@@ -15,6 +15,13 @@ THE LADDER (do not re-derive; this is what every builder here implements):
 
     lamb_dicke=1: keep O(eta^1)  -- linear spin-motion coupling
     lamb_dicke=2: keep O(eta^2)  -- adds a^2/a^dag^2 and a Stark-shift-like term
+                  PER mode, plus -- whenever more than one mode is driven --
+                  the cross term between every pair of DIFFERENT modes,
+                  eta_m*eta_m' * X_m(t) X_m'(t), oscillating at the SUM
+                  (nu_m+nu_m') and DIFFERENCE (nu_m-nu_m') of the two mode
+                  frequencies. Not optional: a shared drive tone genuinely
+                  couples two modes together at this order, and dropping it
+                  would silently miss that (see PHYSICS.md section 8).
     lamb_dicke=None: no expansion -- exact, see the closed-form gate below
 
 `rwa=` drops everything except the single resonant term of each tone: the bare
@@ -337,6 +344,57 @@ def _tone_group(H, q, j, modes, ops, mu, amp_fn, phase_fn, lamb_dicke, rwa, tag)
                           + term({q: sigma_y, md.name: adag @ adag}, coeff=h2y, name=ld2)) \
                   + term({q: sigma_x, md.name: two_n_plus_1}, coeff=h0x, name=ld2) \
                   + term({q: sigma_y, md.name: two_n_plus_1}, coeff=h0y, name=ld2)
+
+    if lamb_dicke >= 2:
+        # CROSS-mode eta^2 term: expanding prod_m e^{i eta_m X_m(t)} to second
+        # order picks up not just each mode's own eta_m^2 X_m^2 (above) but,
+        # for every pair of DIFFERENT modes, (i eta_m X_m)(i eta_m' X_m') =
+        # -eta_m eta_m' X_m(t) X_m'(t) -- a genuine physical effect (a
+        # spin-motion coupling between two modes through their shared drive
+        # tone) that a per-mode-only expansion silently drops whenever more
+        # than one mode is driven. X_m(t) X_m'(t) expands into two Hermitian
+        # pieces (each self-adjoint under the SAME plus_hc trick as the
+        # self-term's adag@adag/2n+1 split above):
+        #   sum-type:  adag_m adag_m' e^{+i(nu_m+nu_m')t} + h.c.  (two-phonon
+        #              creation/annihilation together -- driven at the SUM of
+        #              the two mode frequencies)
+        #   diff-type: adag_m a_m'    e^{+i(nu_m-nu_m')t}  + h.c.  (a phonon
+        #              moved from mode m' to mode m -- driven at the
+        #              DIFFERENCE of the two mode frequencies)
+        # Verified against a from-scratch two-mode expansion of the exact
+        # displacement-operator product (no series) in tests/test_molmer_sorensen.py.
+        for mi, md1 in enumerate(modes):
+            e1, nu1 = md1.eta[j], md1.nu
+            a1, adag1 = ops[md1.name]
+            for md2 in modes[mi + 1:]:
+                e2, nu2 = md2.eta[j], md2.nu
+                a2, adag2 = ops[md2.name]
+                pref_c = -(e1 * e2) / 2
+                def csx(t, Phi=Phi, pref_c=pref_c, nu1=nu1, nu2=nu2,
+                       amp_fn=amp_fn, phase_fn=phase_fn):
+                    return pref_c * amp_fn(t) * cmath.exp(1j * (nu1 + nu2) * t) \
+                           * math.cos(Phi(t) + phase_fn(t))
+                def csy(t, Phi=Phi, pref_c=pref_c, nu1=nu1, nu2=nu2,
+                       amp_fn=amp_fn, phase_fn=phase_fn):
+                    return pref_c * amp_fn(t) * cmath.exp(1j * (nu1 + nu2) * t) \
+                           * math.sin(Phi(t) + phase_fn(t))
+                def cdx(t, Phi=Phi, pref_c=pref_c, nu1=nu1, nu2=nu2,
+                       amp_fn=amp_fn, phase_fn=phase_fn):
+                    return pref_c * amp_fn(t) * cmath.exp(1j * (nu1 - nu2) * t) \
+                           * math.cos(Phi(t) + phase_fn(t))
+                def cdy(t, Phi=Phi, pref_c=pref_c, nu1=nu1, nu2=nu2,
+                       amp_fn=amp_fn, phase_fn=phase_fn):
+                    return pref_c * amp_fn(t) * cmath.exp(1j * (nu1 - nu2) * t) \
+                           * math.sin(Phi(t) + phase_fn(t))
+                ldx = f"ld2x_{q}_{md1.name}_{md2.name}_{tag}"
+                H = H + plus_hc(term({q: sigma_x, md1.name: adag1, md2.name: adag2},
+                                    coeff=csx, name=ldx)
+                              + term({q: sigma_y, md1.name: adag1, md2.name: adag2},
+                                    coeff=csy, name=ldx)) \
+                      + plus_hc(term({q: sigma_x, md1.name: adag1, md2.name: a2},
+                                    coeff=cdx, name=ldx)
+                              + term({q: sigma_y, md1.name: adag1, md2.name: a2},
+                                    coeff=cdy, name=ldx))
     return H
 
 

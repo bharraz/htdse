@@ -286,6 +286,23 @@ ion, or swapping a drive is a group operation. Numerical note: these carry oscil
 $\mu$ and $2\nu$, so the ODE solver has to resolve the trap frequency — cost grows with
 $\nu T$. That's inherent to simulating pre-RWA physics.
 
+**Cross-mode $\eta^2$ (more than one mode).** The formula above is one mode's own
+$\eta_m^2 X_m^2$ term. Expanding $\prod_m e^{i\eta_m X_m(t)}$ to second order also
+produces, for every pair of *different* modes $m\neq m'$, a genuine cross term
+$(i\eta_m X_m)(i\eta_{m'}X_{m'}) = -\eta_m\eta_{m'}X_m(t)X_{m'}(t)$ — a coupling the
+tone induces BETWEEN two modes, not within one:
+
+$$ X_m(t)X_{m'}(t) = \underbrace{a_m a_{m'}\,e^{-i(\nu_m+\nu_{m'})t} + \text{h.c.}}_{\text{sum frequency}}
+\;+\; \underbrace{a_m a_{m'}^\dagger\,e^{-i(\nu_m-\nu_{m'})t} + \text{h.c.}}_{\text{difference frequency}} $$
+
+group `ld2x_qj_modem_modem'_tonek`. This is not optional physics to skip: any
+`driven_spins(..., lamb_dicke=2)` call with more than one mode picks it up
+automatically (nothing to opt into), since dropping it would silently miss a real
+spin-motion-motion coupling whenever two modes share a drive tone. Verified against a
+from-scratch expansion of the exact (unexpanded) two-mode displacement-operator
+product, at random parameters, away from the same Fock-truncation-edge artifact the
+single-mode term already has (`tests/test_molmer_sorensen.py`).
+
 **Level: exact, `lamb_dicke=None`.** No expansion of $e^{i\eta X(t)}$ at all —
 `driven_spins(..., lamb_dicke=None)` returns a `System`, not a `Model` (`sigma_+ (x) D(t)`
 is a genuinely t-dependent matrix, not a sum of scalar-coefficient × fixed-operator terms,

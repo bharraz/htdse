@@ -291,4 +291,54 @@ for _tt in [0.0, 0.5, 2.0]:
     check(f"chirp Phi(t) matches the analytic integral at t={_tt}",
           abs(_Phi(_tt) - (_mu0 * _tt + 0.5 * _rate * _tt ** 2)) < 1e-8)
 
+print("== cross-mode eta^2 term: sum/difference frequencies of two modes ==")
+from htdse.submodules.harmonic_oscillator import annihilation
+from htdse.submodules.spin import sigma_plus
+# lamb_dicke=2 with >1 mode used to keep only each mode's OWN eta_m^2 term
+# and silently drop the eta_m*eta_m' cross term between different modes --
+# a real physical effect (X_m(t)X_m'(t) has pieces oscillating at nu_m+nu_m'
+# and nu_m-nu_m'). Verified against a from-scratch two-mode expansion of the
+# EXACT (unexpanded) displacement-operator product, at random parameters,
+# away from the Fock-truncation edge (where a@adag != adag@a+1, a pre-existing
+# truncation artifact shared with the single-mode eta^2 term).
+_rng_x = np.random.default_rng(11)
+for _trial in range(10):
+    _nu1, _nu2 = _rng_x.uniform(3, 12, 2)
+    _eta1, _eta2 = _rng_x.uniform(0.05, 0.15, 2)
+    _n1, _n2 = int(_rng_x.integers(4, 7)), int(_rng_x.integers(4, 7))
+    _Om, _phase, _mu = _rng_x.uniform(0.3, 1.0), _rng_x.uniform(0, 2), _rng_x.uniform(-3, 3)
+    _m1 = Mode(nu=_nu1, eta=_eta1, n_max=_n1, name="m1")
+    _m2 = Mode(nu=_nu2, eta=_eta2, n_max=_n2, name="m2")
+    _H2x = driven_spins([Tone(offset=_mu, amp=_Om, phase=_phase)], ["q0"], [_m1, _m2], lamb_dicke=2)
+
+    _a1 = annihilation(_n1); _adag1 = _a1.conj().T
+    _a2 = annihilation(_n2); _adag2 = _a2.conj().T
+    _I1, _I2m = np.eye(_n1 + 1), np.eye(_n2 + 1)
+    _tt = _rng_x.uniform(0, 2)
+    _X1 = _a1 * np.exp(-1j * _nu1 * _tt) + _adag1 * np.exp(1j * _nu1 * _tt)
+    _X2 = _a2 * np.exp(-1j * _nu2 * _tt) + _adag2 * np.exp(1j * _nu2 * _tt)
+    _XX1, _XX2 = np.kron(_X1, _I2m), np.kron(_I1, _X2)
+    _D = (np.eye((_n1 + 1) * (_n2 + 1), dtype=complex) + 1j * _eta1 * _XX1 + 1j * _eta2 * _XX2
+         - (_eta1 ** 2 / 2) * (_XX1 @ _XX1) - (_eta2 ** 2 / 2) * (_XX2 @ _XX2)
+         - _eta1 * _eta2 * (_XX1 @ _XX2))   # the cross term under test
+    _coeff = (_Om / 2) * np.exp(-1j * (_mu * _tt + _phase))
+    _Hm = _coeff * np.kron(sigma_plus, _D); _Hm = _Hm + _Hm.conj().T
+
+    _code = np.asarray(_H2x.hamiltonian(_tt))
+    _diff4 = (_code - _Hm).reshape(2, _n1 + 1, _n2 + 1, 2, _n1 + 1, _n2 + 1)
+    _maxd = np.max(np.abs(_diff4[:, :_n1, :_n2, :, :_n1, :_n2]))  # exclude both Fock edges
+    check(f"cross-mode eta^2 term matches exact two-mode expansion (trial {_trial})",
+          _maxd < 1e-9)
+    check(f"driven_spins(lamb_dicke=2, 2 modes) stays Hermitian (trial {_trial})",
+          np.max(np.abs(_code - _code.conj().T)) < 1e-10)
+
+_H2_cross = driven_spins([Tone(offset=1.0, amp=0.5)], ["q0"],
+                         [Mode(5.0, 0.12, 5, "m1"), Mode(8.0, 0.1, 5, "m2")], lamb_dicke=2)
+_no_cross_groups = {k: v for k, v in _H2_cross.groups.items() if not k.startswith("ld2x_")}
+import htdse.core.terms as _ct
+_H2_no_cross = _ct.Model(_H2_cross.subsystems, _no_cross_groups, _H2_cross.jumps)
+check("cross-mode term is a real (nonzero) effect, not a no-op",
+      np.max(np.abs(np.asarray(_H2_cross.hamiltonian(0.3))
+                    - np.asarray(_H2_no_cross.hamiltonian(0.3)))) > 1e-6)
+
 print(f"\nALL {len(PASS)} SPIN-BOSON/MS CHECKS PASSED")
