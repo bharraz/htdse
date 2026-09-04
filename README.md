@@ -1,5 +1,5 @@
 # htdse
-
+WIP: add model section as 'most systems', Simulate a System framing, make extending systems only based on difference with model, understand guards and breakpoints
 NOTE: Written with significant help from AI (Claude). Built over many revisions, stemming from human design.
 
 A small, transparent time-dependent Schrödinger/Lindblad solver.
@@ -33,50 +33,13 @@ fork of the solver.
 pip install -e .
 ```
 
-## Quickstart
-
-**Example**: A Rabi drive, and the same drive with a 5% amplitude error plus a stray detuning:
-
-```python
-import numpy as np
-import htdse as ht
-from htdse.submodules.spin import sigma_x, sigma_z # submodules add convenience
-
-target = ht.term(0.5 * sigma_x, on="q", name="drive")          # H = (Omega/2) sigma_x
-
-noisy = (ht.term(0.5 * 1.05 * sigma_x, on="q", name="drive")   # 5% amplitude error
-         + ht.term(0.02 * sigma_z, on="q", name="detuning"))   # + stray detuning
-realized = target.replace(drive=noisy)                          # same model, one group swapped
-
-ts = np.linspace(0, 4 * np.pi, 200)
-with ht.quiet():
-    F = ht.compare_over(ts,     # Compares the two evolutions over the passed times, given the passed metric
-                        ht.HamiltonianEvolution(target, ht.ket("0")),
-                        ht.HamiltonianEvolution(realized, ht.ket("0")),
-                        metric=ht.fidelity)
-print(f"worst-case fidelity: {F.min():.4f}")
-```
-
-## The five things you need
-
-The package exports about thirty names. These five cover most work; everything else is
-either a convenience or an escape hatch you will find when you need it.
-
-| | |
-|---|---|
-| `ht.term(op, on="name")` | one piece of a Hamiltonian, tagged with the subsystem it acts on. Returns a Model. |
-| `+` | compose pieces into a `Model` (names do the tensor bookkeeping) |
-| `ht.HamiltonianEvolution(model, psi0)` | solve it (or `Unitary` / `DensityMatrix` / `Lindblad`) |
-| `.state_at(t)` | the answer, at a time or an array of times |
-| `ht.fidelity(a, b)` | compare two answers |
-
 ## The hierarchy
 
 **You evolve a System.** That is the one sentence to remember. A `System` is anything that
 answers "what are the dynamics at time `t`?" — it implements `hamiltonian(t)` and/or
 `unitary(t)`. Nothing else is required.
 
-`Model` is not a layer above or below that. It is one *convenient way* to build a System:
+`Model` is one *convenient way* to build a System:
 you write your physics as a sum of named terms and it handles the tensor bookkeeping,
 caching, and swapping for you. A hand-written class is the other way, for physics that
 isn't a sum of terms.
@@ -113,9 +76,9 @@ flowchart TB
 Internally a `Model` stores each summand as a private `_Term`, because a coefficient that
 is `f(t)` can't be folded into a matrix until you know `t`. You never construct or see one.
 
-The load-bearing idea in the `Model` path is the **subsystem name**. Two operators tagged
+`Model` enables easier system construction with **subsystem names**. Two operators tagged to act on
 `"spin"` act on the same tensor factor, so `+` lines them up and identity-pads
-automatically. You never write `⊗ I` by hand, and no joint matrix exists until an evolution
+automatically. You never write `⊗ I` by hand, and no joint matrix exists until an evolution 
 asks for `H(t)`.
 
 ```python
