@@ -25,6 +25,12 @@ def process_fidelity(U1: np.ndarray, U2: np.ndarray) -> float:
     d = U1.shape[0]
     return float(np.abs(np.trace(U1.conj().T @ U2)) ** 2 / d ** 2)  # |Tr(U1^dag U2)|^2 / d^2
 
+def Tr(op: np.ndarray) -> complex:
+    """Trace of a matrix, Tr(op) = sum_i op[i,i]. Named for how it reads in
+    a formula (e.g. population = Tr(Proj @ rho)) rather than np.trace(op)
+    inline -- the whole point of this module is physics-equation clarity."""
+    return np.trace(op)
+
 def density_fidelity(rho: np.ndarray, psi: np.ndarray) -> float:
     """Fidelity between a density matrix and a pure state: <psi|rho|psi>.
 
