@@ -248,13 +248,15 @@ class System:
     """
 
     def __init__(self, subsystems: dict | None = None, groups: dict | None = None,
-                 jumps: dict | None = None, sparse: bool = False):
+                 jumps: dict | None = None, sparse: bool = False,
+                 breakpoints=()):
         object.__setattr__(self, "subsystems", MappingProxyType(dict(subsystems or {})))
         object.__setattr__(self, "groups", MappingProxyType(
             {k: tuple(v) for k, v in (groups or {}).items()}))
         object.__setattr__(self, "jumps", MappingProxyType(
             {k: tuple(v) for k, v in (jumps or {}).items()}))
         object.__setattr__(self, "is_sparse", bool(sparse))
+        object.__setattr__(self, "_breakpoints", tuple(sorted(set(float(t) for t in breakpoints))))
         object.__setattr__(self, "_cache", None)
         object.__setattr__(self, "_hinted", False)
         object.__setattr__(self, "_immutable", True)
@@ -268,6 +270,10 @@ class System:
     def H(self, t):
         """Paper-style alias for the Hamiltonian accessor."""
         return self.hamiltonian(t)
+
+    def breakpoints(self):
+        """Discontinuities at which an evolution must restart integration."""
+        return np.asarray(self._breakpoints, dtype=float)
 
     # ---- composition ----------------------------------------------------
 
@@ -286,7 +292,8 @@ class System:
             jumps.setdefault(k, ())
             jumps[k] = jumps[k] + tuple(terms)
         # sparse is sticky under composition: either side sparse => sum sparse
-        return System(subsystems, groups, jumps, sparse=self.is_sparse or other.is_sparse)
+        return System(subsystems, groups, jumps, sparse=self.is_sparse or other.is_sparse,
+                      breakpoints=self._breakpoints + other._breakpoints)
 
     __radd__ = __add__
 
@@ -310,7 +317,8 @@ class System:
         The flag is sticky under composition: `H.sparse() + other` is sparse.
         `H.sparse(False)` (or on any composition of sparse models) toggles back
         to dense."""
-        return System(self.subsystems, self.groups, self.jumps, sparse=flag)
+        return System(self.subsystems, self.groups, self.jumps, sparse=flag,
+                      breakpoints=self._breakpoints)
 
     def _reject_jumps(self, op: str):
         """Scaling/negating/subtracting a DISSIPATIVE model has no agreed
@@ -332,7 +340,8 @@ class System:
         Refuses a System carrying jump operators (see `_reject_jumps`)."""
         self._reject_jumps("scale")
         groups = {k: tuple(term.scaled(c) for term in v) for k, v in self.groups.items()}
-        return System(self.subsystems, groups, self.jumps, sparse=self.is_sparse)
+        return System(self.subsystems, groups, self.jumps, sparse=self.is_sparse,
+                      breakpoints=self._breakpoints)
 
     __rmul__ = __mul__
 
@@ -357,7 +366,8 @@ class System:
         physically different channel, and carrying jumps through `h + h.dag()`
         would silently double every dissipation rate."""
         groups = {k: tuple(term.dag() for term in v) for k, v in self.groups.items()}
-        return System(self.subsystems, groups, sparse=self.is_sparse)
+        return System(self.subsystems, groups, sparse=self.is_sparse,
+                      breakpoints=self._breakpoints)
 
     def replace(self, **named) -> "System":
         """Swap out named term groups wholesale: the composable-error workflow.
@@ -386,7 +396,10 @@ class System:
                 jumps[name] = new_jumps
             elif name in jumps:
                 del jumps[name]
-        return System(subsystems, groups, jumps, sparse=self.is_sparse)
+        return System(subsystems, groups, jumps, sparse=self.is_sparse,
+                      breakpoints=self._breakpoints + tuple(
+                          bp for replacement in named.values()
+                          for bp in getattr(replacement, "_breakpoints", ())))
 
     def without(self, *names) -> "System":
         """Drop named term groups (from both H terms and jumps)."""
@@ -395,7 +408,8 @@ class System:
                 raise KeyError(f"no term group named {name!r}")
         groups = {k: v for k, v in self.groups.items() if k not in names}
         jumps = {k: v for k, v in self.jumps.items() if k not in names}
-        return System(self.subsystems, groups, jumps, sparse=self.is_sparse)
+        return System(self.subsystems, groups, jumps, sparse=self.is_sparse,
+                      breakpoints=self._breakpoints)
 
     def group(self, name) -> "System":
         """Extract one named group as its own System (same registry)."""
@@ -406,7 +420,8 @@ class System:
             jumps[name] = self.jumps[name]
         if not groups and not jumps:
             raise KeyError(f"no term group named {name!r}")
-        return System(self.subsystems, groups, jumps, sparse=self.is_sparse)
+        return System(self.subsystems, groups, jumps, sparse=self.is_sparse,
+                      breakpoints=self._breakpoints)
 
     # ---- materialization (the System protocol) --------------------------
 

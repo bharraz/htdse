@@ -17,7 +17,7 @@ mode `magnus_pauli` can't touch (it needs dim = 2^n).
 Typical use, projecting a spin-dependent-force gate down to its spin-only
 effective Hamiltonian once the motion has (approximately) returned:
 
-    M = project(U, subsystems, on="mode", state=0)   # <0|U|0> on the mode
+    M = project_block(U, subsystems, on="mode", state=0)   # <0|U|0> on the mode
     c = closure(M)                                    # 1.0 = motion returned cleanly
     H_eff = generator(M, T)                           # M ~= exp(-i H_eff T)
     print(paulis(H_eff))                              # {"XX": ..., "ZI": ...}
@@ -32,7 +32,7 @@ from ..magnus import pauli_decompose
 paulis = pauli_decompose  # same function, read-layer name for discoverability
 
 
-def project(U, subsystems: dict, on: str, state: int = 0) -> np.ndarray:
+def project_block(U, subsystems: dict, on: str, state: int = 0) -> np.ndarray:
     """<state|_on U |state>_on -- project OUT one named subsystem of an
     operator by fixing it to one basis state on both sides, leaving the
     operator on the remaining subsystems.
@@ -40,8 +40,8 @@ def project(U, subsystems: dict, on: str, state: int = 0) -> np.ndarray:
     Typical use: `on="mode"`, `state=0` reads off the spin-only gate a
     spin-dependent-force Hamiltonian implements, GIVEN the motion returns to
     its starting Fock state -- which is an assumption, not a guarantee.
-    Check it with `closure(project(...))` before trusting the result: if the
-    motion doesn't fully decouple, `project` silently discards the leaked
+    Check it with `closure(project_block(...))` before trusting the result: if the
+    motion doesn't fully decouple, `project_block` silently discards the leaked
     amplitude and hands back a well-formed but non-unitary matrix.
 
     U: (D, D) operator over `subsystems` (same registry-order convention as
@@ -72,7 +72,7 @@ def project(U, subsystems: dict, on: str, state: int = 0) -> np.ndarray:
 
 
 def closure(M) -> float:
-    """How close a projected block `M` (from `project`, typically) is to
+    """How close a projected block `M` (from `project_block`, typically) is to
     unitary -- the physical closure diagnostic.
 
     1.0: perfect closure -- the projected-out subsystem returned to its
@@ -80,7 +80,7 @@ def closure(M) -> float:
     numerical error) the unitary it looks like.
     Less than 1: some state-dependent amplitude leaked into a DIFFERENT
     state of the projected-out subsystem and was silently discarded by
-    `project`'s fixed-index slice -- real information loss `project` cannot
+    `project_block`'s fixed-index slice -- real information loss `project_block` cannot
     see by itself. Returns the smallest singular value of M, i.e. its
     worst-case shrinkage as an operator (the closure fidelity for the worst
     input state)."""
@@ -123,18 +123,29 @@ def max_eigenphase(H_eff, T: float) -> float:
     return float(np.max(np.abs(evals)) * T / np.pi)
 
 
-def expect(state, operator) -> complex:
+def expect(operator, state) -> complex | np.ndarray:
     """<psi|operator|psi> for a ket, Tr(operator rho) for a density matrix --
     the one call that reads out an expectation value regardless of which
     Evolution class produced `state`. `bra(s) @ psi` still reads best for a
     literal amplitude <s|psi>; `expect` is for "what does this operator read
     on this state," ket or mixed, without branching on state.ndim yourself."""
+    operator = np.asarray(operator)
     state = np.asarray(state)
+    if operator.ndim != 2 or operator.shape[0] != operator.shape[1]:
+        raise ValueError(f"expect needs a square operator, got shape {operator.shape}")
     if state.ndim == 1:
         return complex(np.vdot(state, operator @ state))
-    if state.ndim == 2:
+    if state.ndim == 2 and state.shape[0] == state.shape[1]:
         return complex(np.trace(operator @ state))
-    raise ValueError(f"expect needs a ket (d,) or density matrix (d,d), got shape {state.shape}")
+    if state.ndim == 2:
+        if state.shape[1] != operator.shape[0]:
+            raise ValueError(f"expect ket batch dimension {state.shape[1]} does not match operator dimension {operator.shape[0]}")
+        return np.einsum("ni,ij,nj->n", state.conj(), operator, state)
+    if state.ndim == 3:
+        if state.shape[-2:] != operator.shape:
+            raise ValueError(f"expect density batch shape {state.shape[-2:]} does not match operator shape {operator.shape}")
+        return np.einsum("ij,nji->n", operator, state)
+    raise ValueError(f"expect needs a ket, density matrix, or batch thereof, got shape {state.shape}")
 
 
 def show(H, t: float = 0.0, tol: float = 1e-10):

@@ -17,10 +17,10 @@ def _check_dims(rho, dims: dict) -> None:
                          f"but the operator has dimension {rho.shape[-1]}")
 
 
-def partial_trace(rho, dims: dict, trace_out: tuple) -> np.ndarray:
+def partial_trace(rho, subsystems: dict, trace_out: tuple) -> np.ndarray:
     """Partial trace of a density matrix over named subsystems.
 
-    H = H_1 (x) ... (x) H_N, `dims` = {name: dim(H_i)} in tensor-product order.
+    H = H_1 (x) ... (x) H_N, `subsystems` = {name: dim(H_i)} in tensor-product order.
     Reshapes rho into a 2N-index tensor (one row + one column index per
     subsystem) and traces the row/column pair for each name in `trace_out`:
 
@@ -33,16 +33,16 @@ def partial_trace(rho, dims: dict, trace_out: tuple) -> np.ndarray:
     `trace_out` is a name or an iterable of names.
     """
     rho = np.asarray(rho, dtype=complex)
-    _check_dims(rho, dims)
+    _check_dims(rho, subsystems)
     # a bare "mode" would otherwise iterate into 'm','o','d','e'
     trace_out = (trace_out,) if isinstance(trace_out, str) else tuple(trace_out)
-    unknown = [n for n in trace_out if n not in dims]
+    unknown = [n for n in trace_out if n not in subsystems]
     if unknown:
-        raise KeyError(f"unknown subsystem(s) {unknown}; registry has {list(dims)}")
+        raise KeyError(f"unknown subsystem(s) {unknown}; registry has {list(subsystems)}")
     if len(set(trace_out)) != len(trace_out):
         raise ValueError(f"repeated subsystem in {trace_out}")
-    names = list(dims.keys())
-    shape = list(dims.values())
+    names = list(subsystems.keys())
+    shape = list(subsystems.values())
     N = len(names)
     batch = rho.shape[:-2]
     nb = len(batch)
@@ -56,12 +56,12 @@ def partial_trace(rho, dims: dict, trace_out: tuple) -> np.ndarray:
         names.pop(i)
         N -= 1
 
-    kept_dim = int(np.prod([dims[n] for n in names])) if names else 1
+    kept_dim = int(np.prod([subsystems[n] for n in names])) if names else 1
     return np.asarray(tensor.reshape(*batch, kept_dim, kept_dim))  # back to flat matrices
 
 
-def embed(op, dims: dict, subsystem) -> np.ndarray:
-    """Lift `op` into the full joint space defined by `dims` ({name: dim},
+def embed(op, subsystems: dict, subsystem) -> np.ndarray:
+    """Lift `op` into the full joint space defined by `subsystems` ({name: dim},
     in tensor-product order), acting as identity everywhere it isn't defined.
 
     `subsystem` is one name or a tuple of names:
@@ -78,10 +78,10 @@ def embed(op, dims: dict, subsystem) -> np.ndarray:
     remap), so the dense joint matrix is never formed. Dense in -> dense ndarray
     out; sparse in -> CSR out.
     """
-    names = list(dims.keys())
+    names = list(subsystems.keys())
     involved = (subsystem,) if isinstance(subsystem, str) else tuple(subsystem)
     for nm in involved:
-        if nm not in dims:
+        if nm not in subsystems:
             raise KeyError(f"unknown subsystem {nm!r}; registry has {names}")
     if len(set(involved)) != len(involved):
         raise ValueError(f"repeated subsystem in {involved}")
@@ -89,13 +89,13 @@ def embed(op, dims: dict, subsystem) -> np.ndarray:
     is_sparse = _sp.issparse(op)
     if not is_sparse:
         op = np.asarray(op, dtype=complex)
-    d_inv = int(np.prod([dims[n] for n in involved]))
+    d_inv = int(np.prod([subsystems[n] for n in involved]))
     if op.shape != (d_inv, d_inv):
         raise ValueError(f"op has shape {op.shape}, but subsystems {involved} "
                          f"give dimension {d_inv}")
 
     rest = [n for n in names if n not in involved]
-    d_rest = int(np.prod([dims[n] for n in rest])) if rest else 1
+    d_rest = int(np.prod([subsystems[n] for n in rest])) if rest else 1
     order_now = list(involved) + rest
 
     if is_sparse:
@@ -104,7 +104,7 @@ def embed(op, dims: dict, subsystem) -> np.ndarray:
                        format="coo")
         if order_now == names:
             return big.tocsr()
-        return _permute_factors_sparse(big, dims, order_now)
+        return _permute_factors_sparse(big, subsystems, order_now)
 
     big = np.kron(op, np.eye(d_rest, dtype=complex))  # ordered: involved..., rest...
 
@@ -112,12 +112,12 @@ def embed(op, dims: dict, subsystem) -> np.ndarray:
         return np.asarray(big)  # already in canonical order, no permutation needed
 
     # permute tensor factors from (involved..., rest...) into `dims` order
-    shape_now = [dims[n] for n in order_now]
+    shape_now = [subsystems[n] for n in order_now]
     n = len(names)
     perm = [order_now.index(nm) for nm in names]  # output axis j reads source axis perm[j]
     tensor = big.reshape(shape_now + shape_now)
     tensor = tensor.transpose(perm + [p + n for p in perm])  # rows and columns together
-    D = _total_dim(dims)
+    D = _total_dim(subsystems)
     return np.asarray(tensor.reshape(D, D))
 
 
@@ -145,29 +145,52 @@ def _permute_factors_sparse(big, dims: dict, order_now: list):
     return _sp.coo_matrix((big.data, (new_rows, new_cols)), shape=(D, D)).tocsr()
 
 
-def apply(state, op, dims: dict, on) -> np.ndarray:
+def apply_unitary(state, operator, subsystems=None, on=None) -> np.ndarray:
     """Apply a local operator `op` on named subsystem(s) `on` to a ket or a
     density matrix, leaving the other subsystems alone.
 
-    `on` is a name or a tuple of names; `dims` is the {name: dim} registry
-    (e.g. an evolution's `.subsystems`). `op` acts on just the `on` factor(s)
-    and is lifted with `embed`, so you never write the identity padding:
+    `on` is a name or a tuple of names; `subsystems` is the {name: dim} registry
+    (e.g. an evolution's `.subsystems`). A local operator is lifted with
+    `embed`, so you never write the identity padding. For a full-space
+    operator, omit `subsystems` and `on`:
 
         ket:            |psi>  ->  U|psi>
         density matrix: rho    ->  U rho U^dagger,     U = embed(op, dims, on)
 
     Dispatched on shape (1-D -> ket, 2-D -> density matrix). Example: a
-    Hadamard on one ancilla is `apply(rho, H, dims, "a1")`; on both at once,
-    `apply(rho, otimes(H, H), dims, ("a1", "a2"))`.
+    Hadamard on one ancilla is `apply_unitary(rho, H, subsystems, "a1")`; on
+    both at once, `apply_unitary(rho, otimes(H, H), subsystems, ("a1", "a2"))`.
     """
-    U = embed(op, dims, on)
     arr = np.asarray(state)
+    U = np.asarray(operator)
+    if subsystems is not None:
+        if on is None:
+            raise ValueError("local operator application needs `on=` naming its subsystem(s)")
+        U = embed(U, subsystems, on)
+    elif on is not None:
+        raise ValueError("`on=` requires a `subsystems=` registry")
+    if U.ndim != 2 or U.shape[0] != U.shape[1]:
+        raise ValueError(f"unitary must be square, got shape {U.shape}")
     if arr.ndim == 1:
+        if arr.shape[0] != U.shape[0]:
+            raise ValueError(f"state dimension {arr.shape[0]} does not match unitary dimension {U.shape[0]}")
         return np.asarray(U @ arr)
-    return np.asarray(U @ arr @ U.conj().T)
+    if arr.ndim == 2 and arr.shape[0] == arr.shape[1]:
+        if arr.shape[0] != U.shape[0]:
+            raise ValueError(f"density-matrix dimension {arr.shape[0]} does not match unitary dimension {U.shape[0]}")
+        return np.asarray(U @ arr @ U.conj().T)
+    if arr.ndim == 2:
+        if arr.shape[1] != U.shape[0]:
+            raise ValueError(f"ket batch dimension {arr.shape[1]} does not match unitary dimension {U.shape[0]}")
+        return np.asarray(arr @ U.T)
+    if arr.ndim == 3:
+        if arr.shape[-2:] != U.shape:
+            raise ValueError(f"density-matrix batch shape {arr.shape[-2:]} does not match unitary shape {U.shape}")
+        return np.asarray(U @ arr @ U.conj().T)
+    raise ValueError(f"state must be a ket, density matrix, or batch thereof; got shape {arr.shape}")
 
 
-def project(state, dims: dict, on, onto):
+def measure(state, subsystems: dict, on, onto):
     """Projective measurement of subsystem(s) `on` onto the pure state `onto`,
     reduced onto the remaining subsystems. Returns (reduced_rho, probability).
 
@@ -175,7 +198,7 @@ def project(state, dims: dict, on, onto):
     a measured-and-reduced state is generically mixed. `onto` is a state on
     the `on` factor(s), so measuring in the +/- basis is just
     `onto = otimes(|+>, |+>)` (no basis change needed). The probability is the
-    Born rule Tr(P rho), P = embed(|onto><onto|, dims, on).
+    Born rule Tr(P rho), P = embed(|onto><onto|, subsystems, on).
 
         ket:            phi = P|psi>;  p = <phi|phi>;  reduce |phi><phi|
         density matrix: rho -> P rho P;  p = Tr(P rho);  reduce
@@ -183,7 +206,7 @@ def project(state, dims: dict, on, onto):
     """
     onto = np.asarray(onto, dtype=complex)
     onto = onto / np.linalg.norm(onto)
-    P = embed(np.outer(onto, onto.conj()), dims, on)   # |onto><onto| embedded
+    P = embed(np.outer(onto, onto.conj()), subsystems, on)   # |onto><onto| embedded
     arr = np.asarray(state, dtype=complex)
     if arr.ndim == 1:                       # ket
         phi = P @ arr
@@ -195,5 +218,5 @@ def project(state, dims: dict, on, onto):
     if p < 1e-12:
         raise ValueError(f"measurement outcome has ~zero probability ({p:.3g}); "
                          "cannot condition on it")
-    reduced = partial_trace(np.asarray(collapsed / p), dims, on)
+    reduced = partial_trace(np.asarray(collapsed / p), subsystems, on)
     return reduced, p

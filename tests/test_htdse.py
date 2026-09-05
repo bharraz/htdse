@@ -16,9 +16,9 @@ import htdse as ht
 from htdse import (System, Unitary, term, jump, plus_hc, hc, replace, without, group,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, evolve, propagator, embed, partial_trace, compare_over,
-                   otimes, ket, bra, fidelity, process_fidelity, density_fidelity, quiet, dag,
-                   SparseSuggestion, show, project, closure, generator, paulis, max_eigenphase,
-                   expect)
+                   apply_unitary, measure, Tr, otimes, ket, bra, fidelity, process_fidelity,
+                   density_fidelity, quiet, dag, SparseSuggestion, show, project_block,
+                   closure, generator, paulis, max_eigenphase, expect)
 from htdse.core.plotting import (plot_populations, plot_matrix,
                                  plot_phases, plot_adiabatic_populations)
 from htdse.submodules.spin import (sigma_x, sigma_y, sigma_z, I2, sigma_plus,
@@ -28,6 +28,7 @@ from htdse.submodules.harmonic_oscillator import (annihilation, creation,
                                                   ladder_operators,
                                                   ThermalMotionalDecoherence)
 from htdse.submodules.trotter import TrotterizedSystem
+from htdse.submodules.spin_boson import Mode, Tone, driven_spins
 
 rng = np.random.default_rng(7)
 PASS = []
@@ -614,7 +615,7 @@ try:
 except ValueError:
     check("dissipative sparse model rejected by closed-system class", True)
 
-from htdse.core.subsystems import apply as sub_apply, project as sub_project
+from htdse.core.subsystems import apply_unitary as sub_apply
 
 _Had = np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2)
 _dims = {"A": 2, "B": 2}
@@ -622,26 +623,31 @@ _psi = ket("01")  # |0>_A |1>_B
 
 check("apply: unitary on a subsystem of a ket == embed @ psi",
       np.allclose(sub_apply(_psi, _Had, _dims, "A"), embed(_Had, _dims, "A") @ _psi))
+check("apply_unitary is exported and embeds local operators",
+      np.allclose(apply_unitary(_psi, _Had, subsystems=_dims, on="A"),
+                  embed(_Had, _dims, "A") @ _psi))
 _rho = np.outer(_psi, _psi.conj())
 _U = np.asarray(embed(_Had, _dims, "A"))
 check("apply: on a density matrix == U rho U^dag",
       np.allclose(sub_apply(_rho, _Had, _dims, "A"), _U @ _rho @ _U.conj().T))
+check("Tr reads the matrix trace",
+      np.isclose(Tr(_rho), np.trace(_rho)))
 
 _bell = (ket("00") + ket("11")) / np.sqrt(2)
-_rhoB, _p = sub_project(_bell, _dims, "A", ket("0"))
+_rhoB, _p = measure(_bell, _dims, "A", ket("0"))
 _P0 = np.asarray(embed(np.outer(ket("0"), ket("0").conj()), _dims, "A"))
 check("project: Born probability == Tr(P rho)",
       np.isclose(_p, np.real(_bell.conj() @ _P0 @ _bell)))
 check("project: reduces to conditional state on the rest (Bell, A=0 -> B in |0>)",
       np.allclose(_rhoB, np.outer(ket("0"), ket("0").conj())))
-_rhoB2, _p2 = sub_project(np.outer(_bell, _bell.conj()), _dims, "A", ket("0"))
+_rhoB2, _p2 = measure(np.outer(_bell, _bell.conj()), _dims, "A", ket("0"))
 check("project: ket input and density-matrix input agree",
       np.allclose(_rhoB, _rhoB2) and np.isclose(_p, _p2))
 _xp = (ket("0") + ket("1")) / np.sqrt(2)
-_rhoB3, _p3 = sub_project(otimes(_xp, ket("0")), _dims, "A", _xp)
+_rhoB3, _p3 = measure(otimes(_xp, ket("0")), _dims, "A", _xp)
 check("project: +/- basis measurement by passing |+> directly (p=1)", np.isclose(_p3, 1.0))
 try:
-    sub_project(otimes(ket("0"), ket("0")), _dims, "A", ket("1"))  # A is |0>, project on |1>
+    measure(otimes(ket("0"), ket("0")), _dims, "A", ket("1"))  # A is |0>, measure on |1>
     check("project: zero-probability outcome raises", False)
 except ValueError:
     check("project: zero-probability outcome raises", True)
@@ -823,13 +829,18 @@ check("bra('00') @ psi == <00|psi>", bra("00") @ _psi00 == 1.0 + 0j)
 check("bra('01') @ psi == 0", bra("01") @ _psi00 == 0j)
 
 _Z = np.diag([1.0, -1.0]).astype(complex)
-check("expect(ket, Z) == <psi|Z|psi>", abs(expect(ket("0"), _Z) - 1.0) < 1e-12)
-check("expect(ket, Z) == -1 on |1>", abs(expect(ket("1"), _Z) - (-1.0)) < 1e-12)
+check("expect(Z, ket) == <psi|Z|psi>", abs(expect(_Z, ket("0")) - 1.0) < 1e-12)
+check("expect(Z, ket) == -1 on |1>", abs(expect(_Z, ket("1")) - (-1.0)) < 1e-12)
 _rho_mixed = np.diag([0.7, 0.3]).astype(complex)
-check("expect(rho, Z) == Tr(Z rho)",
-      abs(expect(_rho_mixed, _Z) - (0.7 - 0.3)) < 1e-12)
-check("expect(ket, Z) == expect(|psi><psi|, Z) for the same pure state",
-      abs(expect(ket("0"), _Z) - expect(np.outer(ket("0"), ket("0").conj()), _Z)) < 1e-12)
+check("expect(Z, rho) == Tr(Z rho)",
+      abs(expect(_Z, _rho_mixed) - (0.7 - 0.3)) < 1e-12)
+check("expect(Z, ket) == expect(Z, |psi><psi|) for the same pure state",
+      abs(expect(_Z, ket("0")) - expect(_Z, np.outer(ket("0"), ket("0").conj()))) < 1e-12)
+_ket_batch = np.stack([ket("0"), ket("1"), ket("0")])
+_rho_batch = np.stack([np.outer(p, p.conj()) for p in _ket_batch])
+check("expect supports ket and density batches",
+      np.allclose(expect(_Z, _ket_batch), [1, -1, 1])
+      and np.allclose(expect(_Z, _rho_batch), [1, -1, 1]))
 
 _jc_term = term({"spin": sigma_plus, "mode": creation(6).conj().T}, coeff=0.1, name="jc")
 _h1 = _jc_term + hc(_jc_term)
@@ -855,7 +866,7 @@ _eta, _delta, _Omega, _n_max = 0.1, 0.5, 0.8, 8
 _gate = ideal_gate(2, eta=_eta, delta=_delta, Omega=_Omega, n_max=_n_max)
 _T = 2 * np.pi / _delta
 _U = np.asarray(_gate.unitary(_T))
-_M = project(_U, _gate.subsystems, on="mode", state=0)
+_M = project_block(_U, _gate.subsystems, on="mode", state=0)
 check("project reduces a joint propagator to the spin-only block",
       _M.shape == (4, 4))
 check("closure == 1.0 for an ideal loop-closed gate", abs(closure(_M) - 1.0) < 1e-8)
@@ -870,7 +881,7 @@ check("paulis' YY coefficient matches the gate's own entangling_angle exactly",
 check("max_eigenphase is small and positive for this weak-coupling example",
       0 < max_eigenphase(_H_eff, _T) < 0.1)
 try:
-    project(_U, _gate.subsystems, on="not_a_subsystem")
+    project_block(_U, _gate.subsystems, on="not_a_subsystem")
     check("project rejects an unknown subsystem name", False)
 except KeyError:
     check("project rejects an unknown subsystem name", True)
@@ -962,7 +973,7 @@ print("== import structure: the physics vocabulary is reachable from the top =="
 _flat_names = ["sigma_x", "sigma_y", "sigma_z", "sigma_plus", "sigma_minus", "I2",
               "pauli_term", "pauli_sum", "annihilation", "creation", "number_operator",
               "fock", "thermal", "Tone", "Mode", "driven_spins", "jaynes_cummings",
-              "exact_drive", "rabi", "IonChain", "ms_tones", "ms_closed_form",
+              "exact_drive", "rabi", "ms_tones", "ms_closed_form",
               "ideal_gate", "TrotterizedSystem", "evolve", "propagator"]
 check("physics vocabulary is flattened onto `htdse`", all(hasattr(ht, n) for n in _flat_names))
 _submodule_names = ["spin", "harmonic_oscillator", "spin_boson", "trapped_ion",
@@ -971,5 +982,210 @@ check("every submodule is reachable by name from `htdse`",
       all(hasattr(ht, n) for n in _submodule_names))
 check("`htdse.wigner` is the MODULE, not the function (no name collision)",
       not callable(ht.wigner) and callable(ht.wigner.wigner))
+
+print("== Milestone 4: immutable tone data and compilation ==")
+_chain4 = ht.ion_chain([Mode(nu=3.0, eta=0.1, n_max=3, name="mode")], 1)
+_tone4 = ht.tone("q0", detuning=0.0, amplitude=0.4, start=1.0,
+                 duration=2.0, orders=(0,))
+_wait4 = ht.wait(start=0.0, duration=1.0)
+_seq4 = ht.sequence(_wait4, _tone4)
+_compiled4 = ht.compile_tones(_chain4, _seq4)
+check("ion_chain, tone, wait, and sequence are exported",
+      all(hasattr(ht, name) for name in
+          ("ion_chain", "tone", "wait", "sequence", "compile_tones")))
+check("tone and sequence data are immutable",
+      _tone4.start == 1.0 and _tone4.duration == 2.0
+      and _seq4.instructions == (_wait4, _tone4))
+check("compiled tone includes its chain registry and breakpoints",
+      _compiled4.subsystems == _chain4.subsystems
+      and np.allclose(_compiled4.breakpoints(), [0.0, 1.0, 3.0]))
+check("windowed tone is zero outside its interval",
+      np.allclose(_compiled4.hamiltonian(0.5), 0)
+      and not np.allclose(_compiled4.hamiltonian(1.5), 0)
+      and np.allclose(_compiled4.hamiltonian(3.5), 0))
+_compiled_orders = ht.compile_tones(
+    _chain4, ht.sequence(ht.tone("q0", 0.0, amplitude=0.4, duration=1.0, orders=(0, 1))))
+check("tone orders compile isolated carrier plus sideband terms",
+      _compiled_orders.hamiltonian(0.25).shape == (_chain4.dim, _chain4.dim))
+_overlap_a = ht.tone("q0", 0.0, amplitude=0.2, phase=0.0, duration=1.0, orders=(0,))
+_overlap_b = ht.tone("q0", 0.0, amplitude=0.3, phase=0.4, duration=1.0, orders=(0,))
+_overlap = ht.compile_tones(_chain4, ht.sequence(_overlap_a, _overlap_b))
+_single_a = ht.compile_tones(_chain4, ht.sequence(_overlap_a))
+_single_b = ht.compile_tones(_chain4, ht.sequence(_overlap_b))
+check("overlapping tones add in the compiled Hamiltonian",
+      np.allclose(_overlap.hamiltonian(0.5),
+                  _single_a.hamiltonian(0.5) + _single_b.hamiltonian(0.5)))
+_chain_subset = ht.ion_chain([Mode(nu=3.0, eta=[0.2, 0.7], n_max=2, name="mode")], 2)
+_subset = ht.compile_tones(
+    _chain_subset,
+    ht.sequence(ht.tone("q1", 0.0, amplitude=0.4, duration=1.0, orders=(1,))))
+_subset_mode = Mode(nu=3.0, eta=0.7, n_max=2, name="mode")
+_subset_ref = (driven_spins([Tone(offset=0.0, amp=0.4)], ["q1"],
+                             [_subset_mode], lamb_dicke=1)
+               - driven_spins([Tone(offset=0.0, amp=0.4)], ["q1"],
+                              [], lamb_dicke=1))
+check("subset-ion tone uses the targeted participation entries",
+      _subset.hamiltonian(0.5).shape == (_chain_subset.dim, _chain_subset.dim)
+      and np.allclose(_subset.hamiltonian(0.5),
+                      embed(_subset_ref.hamiltonian(0.5), _chain_subset.subsystems,
+                            ("q1", "mode"))))
+try:
+    _chain_subset.modes[0].eta[0] = 9.0
+    check("IonChain participation arrays are read-only", False)
+except ValueError:
+    check("IonChain participation arrays are read-only", True)
+_chirped = ht.compile_tones(
+    _chain4, ht.sequence(ht.tone("q0", detuning=lambda t: 2.0 * t,
+                                 amplitude=0.4, start=1.0, duration=1.0, orders=(0,))))
+_expected_start = embed(0.2 * sigma_x, _chain4.subsystems, "q0")
+_expected_mid = embed(0.2 * (np.cos(1.25) * sigma_x + np.sin(1.25) * sigma_y),
+                      _chain4.subsystems, "q0")
+check("callable detuning phase resets at tone start and remains continuous",
+      np.allclose(_chirped.hamiltonian(1.0), _expected_start, atol=1e-5)
+      and np.allclose(_chirped.hamiltonian(1.5), _expected_mid, atol=2e-4))
+_constant_detuned = ht.compile_tones(
+    _chain4, ht.sequence(ht.tone("q0", detuning=2.0, amplitude=0.4,
+                                 start=1.0, duration=1.0, orders=(0,))))
+check("constant detuning phase also resets at tone start",
+      np.allclose(_constant_detuned.hamiltonian(1.0), _expected_start)
+      and np.allclose(
+          _constant_detuned.hamiltonian(1.5),
+          embed(0.2 * (np.cos(1.0) * sigma_x + np.sin(1.0) * sigma_y),
+                _chain4.subsystems, "q0")))
+
+print("== Milestone 5: gates, virtual frames, and sequence execution ==")
+_gate_chain = ht.ion_chain([Mode(nu=3.0, eta=0.1, n_max=2, name="mode")], 1)
+_psi_gate0 = otimes(ket("0"), fock(0, 2))
+_physical_rx = ht.sequence(ht.rx("q0", np.pi / 2, start=0.0, duration=1.0))
+_ideal_rx = ht.sequence(ht.ideal_rx("q0", np.pi / 2))
+_physical_state = ht.run(_gate_chain, _physical_rx, _psi_gate0, [0.0, 1.0],
+                         verbose=False)[-1]
+_ideal_state = ht.run(_gate_chain, _ideal_rx, _psi_gate0, 1.0, verbose=False)
+check("physical rx and ideal_rx have the same convention",
+      np.allclose(_physical_state, _ideal_state, atol=2e-6))
+_frame_seq = ht.sequence(ht.rz("q0", np.pi / 2, at=0.0),
+                         ht.tone("q0", 0.0, amplitude=0.4, start=0.0,
+                                 duration=1.0, orders=(0,)))
+_frame_h = ht.compile_tones(_gate_chain, _frame_seq).hamiltonian(0.5)
+check("rz changes later tone phase without rotating the state",
+      np.allclose(_frame_h, embed(0.2 * sigma_y, _gate_chain.subsystems, "q0")))
+_rho_gate0 = np.outer(_psi_gate0, _psi_gate0.conj())
+_rho_gate = ht.run(_gate_chain, _ideal_rx, _rho_gate0, 1.0, verbose=False)
+check("sequence runner preserves density-matrix shape and trace",
+      _rho_gate.shape == (6, 6) and np.allclose(np.trace(_rho_gate), 1.0))
+check("sequence inspection exposes event timestamps",
+      np.allclose(ht.breakpoints(_ideal_rx), [0.0])
+      and len(ht.sequence_times(_physical_rx)) > 1)
+_mixed = ht.sequence(ht.rx("q0", np.pi / 2, start=0.0, duration=0.5),
+                     ht.ideal_ry("q0", np.pi / 2, at=0.5))
+_mixed_state = ht.run(_gate_chain, _mixed, _psi_gate0, 1.0, verbose=False)
+_mixed_base = ht.run(_gate_chain,
+                     ht.sequence(ht.rx("q0", np.pi / 2, start=0.0, duration=0.5)),
+                     _psi_gate0, 0.5, verbose=False)
+_mixed_expected = (np.cos(np.pi / 4) * np.eye(6)
+                   - 1j * np.sin(np.pi / 4)
+                   * embed(sigma_y, _gate_chain.subsystems, "q0")) @ _mixed_base
+check("mixed physical and ideal sequence executes in timestamp order",
+      _mixed_state.shape == (6,) and np.allclose(_mixed_state, _mixed_expected,
+                                                 atol=2e-6))
+_rz_xy = ht.sequence(ht.rz("q0", np.pi / 2, at=0.5),
+                     ht.tone("q0", 0.0, amplitude=0.4, start=0.0,
+                             duration=1.0, orders=(0,)))
+_rz_h_before = ht.compile_tones(_gate_chain, _rz_xy).hamiltonian(0.25)
+_rz_h_after = ht.compile_tones(_gate_chain, _rz_xy).hamiltonian(0.75)
+check("rz affects only the later portion of an overlapping tone",
+      np.allclose(_rz_h_before, embed(0.2 * sigma_x, _gate_chain.subsystems, "q0"))
+      and np.allclose(_rz_h_after, embed(0.2 * sigma_y, _gate_chain.subsystems, "q0")))
+_rz_rx = ht.run(_gate_chain,
+                ht.sequence(ht.rz("q0", np.pi / 2, at=0.0),
+                            ht.rx("q0", np.pi / 2, start=0.0, duration=1.0)),
+                _psi_gate0, 1.0, verbose=False)
+_direct_ry = ht.run(_gate_chain,
+                    ht.sequence(ht.ry("q0", np.pi / 2, start=0.0, duration=1.0)),
+                    _psi_gate0, 1.0, verbose=False)
+_rz_ry = ht.run(_gate_chain,
+                ht.sequence(ht.rz("q0", np.pi / 2, at=0.0),
+                            ht.ry("q0", np.pi / 2, start=0.0, duration=1.0)),
+                _psi_gate0, 1.0, verbose=False)
+_direct_minus_rx = ht.run(_gate_chain,
+                          ht.sequence(ht.rx("q0", -np.pi / 2, start=0.0,
+                                             duration=1.0)),
+                          _psi_gate0, 1.0, verbose=False)
+check("rz followed by rx and ry follows the fixed-frame convention",
+      np.allclose(_rz_rx, _direct_ry, atol=2e-6)
+      and np.allclose(_rz_ry, _direct_minus_rx, atol=2e-6))
+_rho_mode = ht.mode_expectation(np.outer(_psi_gate0, _psi_gate0.conj()),
+                                _gate_chain, "mode")
+_rho_modes = ht.mode_expectation(np.stack([np.outer(_psi_gate0, _psi_gate0.conj())] * 2),
+                                 _gate_chain, "mode")
+check("mode_expectation handles single and batched density matrices",
+      np.allclose(_rho_mode, 0.0) and np.allclose(_rho_modes, [0.0, 0.0]))
+try:
+    ht.run(_gate_chain, _physical_rx, _psi_gate0, [1.0, 0.0], verbose=False)
+    check("run rejects unsorted requested times", False)
+except ValueError as e:
+    check("run rejects unsorted requested times", "sorted" in str(e))
+_rxx_chain = ht.ion_chain([Mode(nu=20.0, eta=0.2, n_max=8, name="mode")], 2)
+_rxx_seq = ht.sequence(ht.rxx(("q0", "q1"), np.pi / 2, duration=2 * np.pi,
+                              mode="mode"))
+_rxx_compiled = ht.compile_tones(_rxx_chain, _rxx_seq)
+check("physical rxx compiles as an explicit bichromatic pair",
+      len(_rxx_compiled.groups) >= 2
+      and np.allclose(_rxx_compiled.breakpoints(), [0.0, 2 * np.pi]))
+_rxx_amp = np.sqrt((np.pi / 2) / (2 * np.pi * 0.2 ** 2))
+_rxx_raw = ht.compile_tones(
+    _rxx_chain,
+    ht.sequence(
+        ht.tone(("q0", "q1"), -21.0, amplitude=_rxx_amp,
+                phase=(-np.pi / 2, -np.pi / 2), duration=2 * np.pi, orders=(1,)),
+        ht.tone(("q0", "q1"), +21.0, amplitude=_rxx_amp,
+                phase=(-np.pi / 2, -np.pi / 2), duration=2 * np.pi, orders=(1,))))
+check("physical rxx is exactly ordinary tone sugar with no hidden RWA",
+      all(np.allclose(_rxx_compiled.hamiltonian(t), _rxx_raw.hamiltonian(t))
+          for t in (0.17, 0.63)))
+_rxx_negative = ht.compile_tones(
+    _rxx_chain,
+    ht.sequence(ht.rxx(("q0", "q1"), -np.pi / 2, duration=2 * np.pi,
+                        detuning=1.0, mode="mode")))
+_rxx_negative_raw = ht.compile_tones(
+    _rxx_chain,
+    ht.sequence(
+        ht.tone(("q0", "q1"), -21.0, amplitude=_rxx_amp,
+                phase=(np.pi / 2, -np.pi / 2), duration=2 * np.pi, orders=(1,)),
+        ht.tone(("q0", "q1"), +21.0, amplitude=_rxx_amp,
+                phase=(np.pi / 2, -np.pi / 2), duration=2 * np.pi, orders=(1,))))
+check("rxx compensates an explicit detuning whose sign opposes the angle",
+      np.allclose(_rxx_negative.hamiltonian(0.37),
+                  _rxx_negative_raw.hamiltonian(0.37)))
+_rxx_psi = otimes(ket("00"), fock(0, 8))
+_rxx_physical = ht.run(_rxx_chain, _rxx_seq, _rxx_psi, 2 * np.pi,
+                       verbose=False)
+_rxx_ideal = ht.run(
+    _rxx_chain, ht.sequence(ht.ideal_rxx(("q0", "q1"), np.pi / 2)),
+    _rxx_psi, 2 * np.pi, verbose=False)
+_rxx_rho_p = np.outer(_rxx_physical, _rxx_physical.conj())
+_rxx_rho_i = np.outer(_rxx_ideal, _rxx_ideal.conj())
+print("  rxx density max error:", np.max(np.abs(_rxx_rho_p - _rxx_rho_i)),
+      "state overlap:", abs(np.vdot(_rxx_ideal, _rxx_physical)))
+check("physical rxx approaches its calibrated ideal XX outcome",
+      abs(np.vdot(_rxx_ideal, _rxx_physical)) > 0.999)
+_ms_mode = Mode(nu=3.0, eta=[0.2, 0.3], n_max=3, name="mode")
+_ms_ref = ht.ms_closed_form(["q0", "q1"], [_ms_mode], [0.7],
+                            amplitudes=0.4, phases=[-np.pi / 2, -np.pi / 2])
+_ms_t = 0.31
+_ms_alpha = _ms_ref.alpha(_ms_t)[:, 0]
+_ms_theta = _ms_ref.entangling_angle(_ms_t)[0, 1]
+_ms_value = ht.ms_unitary({"mode": _ms_alpha}, _ms_theta,
+                          ("q0", "q1"), at=0.0)
+_ms_chain = ht.ion_chain([_ms_mode], 2)
+_ms_seq = ht.sequence(_ms_value)
+_ms_initial = otimes(ket("00"), fock(0, 3))
+_ms_u = ht.run(_ms_chain, _ms_seq, _ms_initial, 0.0, verbose=False)
+_ms_ref_u = np.asarray(_ms_ref.unitary(_ms_t))
+_ms_ref_state = _ms_ref_u @ _ms_initial
+_ms_phase = np.vdot(_ms_ref_state, _ms_u)
+_ms_phase /= abs(_ms_phase)
+check("ms_unitary matches the per-ion closed-form displacement outcome",
+      np.allclose(_ms_u, _ms_phase * _ms_ref_state, atol=3e-3))
 
 print(f"\nALL {len(PASS)} CHECKS PASSED")
