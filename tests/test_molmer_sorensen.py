@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import matplotlib
 matplotlib.use("Agg")
 
-from htdse import (UnitaryEvolution, HamiltonianEvolution, quiet,
+from htdse import (UnitaryEvolution, HamiltonianEvolution, quiet, term, embed,
                    process_fidelity, fidelity, otimes, ket)
 from htdse.submodules.harmonic_oscillator import fock, thermal
 from htdse.submodules.spin import sigma_y, sigma_x, pauli_term
@@ -134,8 +134,8 @@ from scipy.signal import find_peaks
 eta_x, Om_x, nu_x, nmax_x = 0.2, 1.0, 60.0, 12
 mode_x = Mode(nu=nu_x, eta=eta_x, n_max=nmax_x, name="mode")
 sys_exact = driven_spins([Tone(offset=0.0, amp=Om_x, phase=0.0)], ["q0"], [mode_x], lamb_dicke=None)
-check("driven_spins(lamb_dicke=None) returns a System (no + / .replace())",
-      not hasattr(sys_exact, "groups"))
+check("driven_spins(lamb_dicke=None) returns a composable System",
+      hasattr(sys_exact, "groups") and hasattr(sys_exact, "replace"))
 for n_level in [0, 2]:
     Om_n_theory = Om_x * np.exp(-eta_x ** 2 / 2) * eval_genlaguerre(n_level, 0, eta_x ** 2)
     psi0 = otimes(ket("0"), fock(n_level, nmax_x))
@@ -232,16 +232,22 @@ check("Mode.from_participation matches manual eta*b",
       np.allclose(mp.eta, eta * np.array(b)) and mp.nu == nu and mp.name == "mode")
 
 ex = driven_spins([Tone(0.0)], ["q0"], [mode1q], lamb_dicke=None)
-try:
-    ex + ex
-    check("exact_drive '+' raises a clear error", False)
-except TypeError as e:
-    check("exact_drive '+' raises a clear error", "sigma_+" in str(e))
-try:
-    ex.replace(x=1)
-    check("exact_drive .replace() raises a clear error", False)
-except AttributeError as e:
-    check("exact_drive .replace() raises a clear error", "replace" in str(e))
+check("operator-valued System scales correctly",
+      np.allclose((2.0 * ex).hamiltonian(0.3), 2.0 * ex.hamiltonian(0.3)))
+check("operator-valued System dag is Hermitian in dense form",
+      np.allclose(ex.dag().hamiltonian(0.3), ex.hamiltonian(0.3).conj().T))
+check("operator-valued System dag is Hermitian in sparse form",
+      np.allclose(ex.sparse().dag().hamiltonian(0.3), ex.hamiltonian(0.3).conj().T))
+ex_combo = ex + term(0.2 * sigma_x, on="q0", name="ordinary")
+check("exact_drive composes with an ordinary term",
+      np.allclose(ex_combo.hamiltonian(0.3),
+                  ex.hamiltonian(0.3) + embed(0.2 * sigma_x, ex.subsystems, "q0")))
+ex_replaced = ex_combo.replace(ordinary=term(0.4 * sigma_x, on="q0"))
+check("operator-valued contribution can be replaced",
+      np.allclose(ex_replaced.hamiltonian(0.3),
+                  ex.hamiltonian(0.3) + embed(0.4 * sigma_x, ex.subsystems, "q0")))
+check("operator-valued contribution can be removed",
+      np.allclose(ex_combo.without("ordinary").hamiltonian(0.3), ex.hamiltonian(0.3)))
 
 g_ideal = ideal_gate(2, eta, delta, Omega, n_max)
 mode_manual = Mode.from_participation(nu=0.0, eta=eta, b=[1.0, 1.0], n_max=n_max)

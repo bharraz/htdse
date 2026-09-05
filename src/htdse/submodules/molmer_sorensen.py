@@ -66,6 +66,7 @@ from scipy.sparse.linalg import expm as _sparse_expm
 from ..core.subsystems import embed
 from .harmonic_oscillator import annihilation
 from .spin_boson import Mode, Tone, _as_consts, _as_funcs, _eval, _sigma
+from ..core.unitary import Unitary
 
 
 def _prepare(spins, modes, delta):
@@ -318,7 +319,12 @@ def ms_closed_form(spins, modes, delta, amplitudes=1.0, phases=0.0,
             return (f"ms_closed_form(N={n_ions}, modes=[{mode_str}], "
                    f"phases={phase_consts})")
 
-    return _MSGate()
+    gate = _MSGate()
+    return Unitary(gate.unitary, dim=dim, subsystems=subsystems,
+                   name=repr(gate), alpha=gate.alpha,
+                   alpha_trajectory=gate.alpha_trajectory,
+                   geometric_phase=gate.geometric_phase,
+                   entangling_angle=gate.entangling_angle)
 
 
 def ideal_gate(n_ions, eta, delta, Omega, n_max, participation=None,

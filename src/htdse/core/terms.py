@@ -48,6 +48,7 @@ Physics caveats the framework cannot check for you:
 """
 import itertools
 import warnings
+from types import MappingProxyType
 from typing import Callable, Union
 
 import numpy as np
@@ -95,6 +96,13 @@ def _densify(M, dim):
     return M.toarray()
 
 
+def _readonly_array(value):
+    """Own an operator array and make the owned copy immutable."""
+    out = np.array(value, dtype=complex, copy=True)
+    out.setflags(write=False)
+    return out
+
+
 class _Term:
     """One product term: coeff (scalar or f(t)) x local ops on named subsystems.
 
@@ -110,16 +118,20 @@ class _Term:
     """
 
     def __init__(self, coeff: Coefficient, ops: dict, dims: dict, frame=None):
-        self.coeff = coeff
-        self.ops = {k if isinstance(k, tuple) else (k,): np.asarray(v, dtype=complex)
-                    for k, v in ops.items()}
-        self.dims = dict(dims)
-        self.frame = frame
+        object.__setattr__(self, "coeff", coeff)
+        object.__setattr__(self, "ops", MappingProxyType({
+            k if isinstance(k, tuple) else (k,): _readonly_array(v)
+            for k, v in ops.items()}))
+        object.__setattr__(self, "dims", MappingProxyType(dict(dims)))
+        object.__setattr__(self, "frame", frame)
         for key, mat in self.ops.items():
             d = int(np.prod([self.dims[n] for n in key]))
             if mat.shape != (d, d):
                 raise ValueError(f"operator on {key} has shape {mat.shape}, "
                                  f"expected ({d}, {d}) from dims {self.dims}")
+
+    def __setattr__(self, name, value):
+        raise AttributeError("contribution records are immutable")
 
     @property
     def is_static(self) -> bool:
@@ -171,6 +183,48 @@ class _Term:
         return _Term(coeff, ops, self.dims, self.frame)
 
 
+class _OperatorTerm:
+    """Private named contribution whose operator is evaluated as ``operator(t)``."""
+
+    def __init__(self, operator: Callable[[float], np.ndarray], on, dims, frame=None):
+        object.__setattr__(self, "operator", operator)
+        object.__setattr__(self, "on", (on,) if isinstance(on, str) else tuple(on))
+        object.__setattr__(self, "dims", MappingProxyType(dict(dims)))
+        object.__setattr__(self, "frame", frame)
+
+    def __setattr__(self, name, value):
+        raise AttributeError("contribution records are immutable")
+
+    def at(self, t, sparse=False, target_dims=None):
+        value = self.operator(t)
+        shape = value.shape if _sp.issparse(value) else np.shape(value)
+        expected = int(np.prod([self.dims[n] for n in self.on]))
+        if shape != (expected, expected):
+            raise ValueError(f"operator-valued contribution on {self.on} has shape "
+                             f"{shape}, expected ({expected}, {expected})")
+        if _sp.issparse(value) and not sparse:
+            value = value.toarray()
+        elif not _sp.issparse(value):
+            value = _readonly_array(value)
+        embedded = embed(value, target_dims or self.dims, self.on)
+        if sparse and not _sp.issparse(embedded):
+            embedded = _sp.csr_matrix(embedded)
+        return embedded if sparse else np.asarray(embedded)
+
+    def scaled(self, c):
+        fn = self.operator
+        factor = c if callable(c) else lambda t: c
+        return _OperatorTerm(lambda t: factor(t) * fn(t), self.on, self.dims, self.frame)
+
+    def dag(self):
+        fn = self.operator
+        def conjugate_transpose(t):
+            value = fn(t)
+            return value.conj().T if _sp.issparse(value) else np.asarray(value).conj().T
+        return _OperatorTerm(conjugate_transpose,
+                             self.on, self.dims, self.frame)
+
+
 def _merge_registry(a: dict, b: dict) -> dict:
     """Union of two {name: dim} registries, first-appearance order.
     Same name MUST mean same dimension -- matching is by name only, never by
@@ -195,13 +249,21 @@ class System:
 
     def __init__(self, subsystems: dict | None = None, groups: dict | None = None,
                  jumps: dict | None = None, sparse: bool = False):
-        self.subsystems = dict(subsystems or {})   # {name: dim}, canonical order
-        self.groups = {k: list(v) for k, v in (groups or {}).items()}  # H terms
-        self.jumps = {k: list(v) for k, v in (jumps or {}).items()}    # Lindblad terms
-        self.is_sparse = bool(sparse)  # materialize as scipy CSR (see `sparse()`)
-        self._cache = None      # built lazily by _materialize()
-        self._cache_key = None  # structure _cache was built from
-        self._hinted = False    # the .sparse() suggestion fires at most once
+        object.__setattr__(self, "subsystems", MappingProxyType(dict(subsystems or {})))
+        object.__setattr__(self, "groups", MappingProxyType(
+            {k: tuple(v) for k, v in (groups or {}).items()}))
+        object.__setattr__(self, "jumps", MappingProxyType(
+            {k: tuple(v) for k, v in (jumps or {}).items()}))
+        object.__setattr__(self, "is_sparse", bool(sparse))
+        object.__setattr__(self, "_cache", None)
+        object.__setattr__(self, "_hinted", False)
+        object.__setattr__(self, "_immutable", True)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_") and name in {"_cache", "_hinted"}:
+            object.__setattr__(self, name, value)
+            return
+        raise AttributeError("System values are immutable; build a transformed System")
 
     def H(self, t):
         """Paper-style alias for the Hamiltonian accessor."""
@@ -215,14 +277,14 @@ class System:
         if not isinstance(other, System):
             return NotImplemented
         subsystems = _merge_registry(self.subsystems, other.subsystems)
-        groups = {k: list(v) for k, v in self.groups.items()}
+        groups = {k: tuple(v) for k, v in self.groups.items()}
         for k, terms in other.groups.items():
-            groups.setdefault(k, [])
-            groups[k] = groups[k] + list(terms)
-        jumps = {k: list(v) for k, v in self.jumps.items()}
+            groups.setdefault(k, ())
+            groups[k] = groups[k] + tuple(terms)
+        jumps = {k: tuple(v) for k, v in self.jumps.items()}
         for k, terms in other.jumps.items():
-            jumps.setdefault(k, [])
-            jumps[k] = jumps[k] + list(terms)
+            jumps.setdefault(k, ())
+            jumps[k] = jumps[k] + tuple(terms)
         # sparse is sticky under composition: either side sparse => sum sparse
         return System(subsystems, groups, jumps, sparse=self.is_sparse or other.is_sparse)
 
@@ -269,7 +331,7 @@ class System:
         """Scale every HAMILTONIAN term's coefficient by a scalar or f(t).
         Refuses a System carrying jump operators (see `_reject_jumps`)."""
         self._reject_jumps("scale")
-        groups = {k: [term.scaled(c) for term in v] for k, v in self.groups.items()}
+        groups = {k: tuple(term.scaled(c) for term in v) for k, v in self.groups.items()}
         return System(self.subsystems, groups, self.jumps, sparse=self.is_sparse)
 
     __rmul__ = __mul__
@@ -294,7 +356,7 @@ class System:
         Caveat: jump operators are DROPPED, not conjugated -- L^dag is a
         physically different channel, and carrying jumps through `h + h.dag()`
         would silently double every dissipation rate."""
-        groups = {k: [term.dag() for term in v] for k, v in self.groups.items()}
+        groups = {k: tuple(term.dag() for term in v) for k, v in self.groups.items()}
         return System(self.subsystems, groups, sparse=self.is_sparse)
 
     def replace(self, **named) -> "System":
@@ -307,8 +369,8 @@ class System:
         already exist -- replacing an unknown name is almost always a typo, so
         it raises. To add a group, use `+`; to delete one, use `without()`."""
         subsystems = dict(self.subsystems)
-        groups = {k: list(v) for k, v in self.groups.items()}
-        jumps = {k: list(v) for k, v in self.jumps.items()}
+        groups = {k: tuple(v) for k, v in self.groups.items()}
+        jumps = {k: tuple(v) for k, v in self.jumps.items()}
         for name, replacement in named.items():
             if name not in groups and name not in jumps:
                 raise KeyError(f"no term group named {name!r}; have "
@@ -316,10 +378,10 @@ class System:
             if not isinstance(replacement, System):
                 raise TypeError(f"replacement for {name!r} must be a System")
             subsystems = _merge_registry(subsystems, replacement.subsystems)
-            groups[name] = [t for terms in replacement.groups.values() for t in terms]
+            groups[name] = tuple(t for terms in replacement.groups.values() for t in terms)
             if not groups[name]:
                 del groups[name]
-            new_jumps = [t for terms in replacement.jumps.values() for t in terms]
+            new_jumps = tuple(t for terms in replacement.jumps.values() for t in terms)
             if new_jumps:
                 jumps[name] = new_jumps
             elif name in jumps:
@@ -337,14 +399,14 @@ class System:
 
     def group(self, name) -> "System":
         """Extract one named group as its own System (same registry)."""
-        out = System(self.subsystems, sparse=self.is_sparse)
+        groups, jumps = {}, {}
         if name in self.groups:
-            out.groups[name] = list(self.groups[name])
+            groups[name] = self.groups[name]
         if name in self.jumps:
-            out.jumps[name] = list(self.jumps[name])
-        if not out.groups and not out.jumps:
+            jumps[name] = self.jumps[name]
+        if not groups and not jumps:
             raise KeyError(f"no term group named {name!r}")
-        return out
+        return System(self.subsystems, groups, jumps, sparse=self.is_sparse)
 
     # ---- materialization (the System protocol) --------------------------
 
@@ -363,25 +425,10 @@ class System:
                          term.involved())
         return np.asarray(embed(term.local_matrix(), self.subsystems, term.involved()))
 
-    def _structure(self):
-        """Cheap fingerprint of what `_cache` was built from. Instances are
-        meant to be immutable, but `H.groups["drive"].append(...)` (or
-        `... [0] = other_term`) is easy to write and would otherwise keep
-        serving the stale cache.
-
-        Identity-level, not value-level: this catches terms added, removed, or
-        swapped, but NOT a _Term mutated in place (`t.coeff = ...`), which keeps
-        its id. Rebuild the System rather than edit a _Term."""
-        return (tuple((k, tuple(id(t) for t in v)) for k, v in self.groups.items()),
-                tuple((k, tuple(id(t) for t in v)) for k, v in self.jumps.items()),
-                tuple(self.subsystems.items()),
-                self.is_sparse)
-
     def _materialize(self):
         """Embed every term once (embedding is time-independent), sum the
         static ones, and keep (coeff_fn, matrix) for the time-dependent ones."""
-        key = self._structure()
-        if self._cache is not None and self._cache_key == key:
+        if self._cache is not None:
             return self._cache
         frames = {t.frame for terms in list(self.groups.values()) + list(self.jumps.values())
                   for t in terms if t.frame is not None}
@@ -396,22 +443,27 @@ class System:
         dynamic = []
         for terms in self.groups.values():
             for term in terms:
+                if isinstance(term, _OperatorTerm):
+                    dynamic.append(("operator", term))
+                    continue
                 mat = self._embed(term)
                 if term.is_static:
                     static = static + term.coeff_at(0.0) * mat
                 else:
-                    dynamic.append((term.coeff, mat))
+                    dynamic.append(("coefficient", term.coeff, mat))
         jump_static = []
         jump_dynamic = []
         for terms in self.jumps.values():
             for term in terms:
+                if isinstance(term, _OperatorTerm):
+                    jump_dynamic.append(("operator", term))
+                    continue
                 mat = self._embed(term)
                 if term.is_static:
                     jump_static.append(term.coeff_at(0.0) * mat)
                 else:
-                    jump_dynamic.append((term.coeff, mat))
+                    jump_dynamic.append(("coefficient", term.coeff, mat))
         self._cache = (static, dynamic, jump_static, jump_dynamic)
-        self._cache_key = key
         self._suggest_sparse(static, dynamic)
         return self._cache
 
@@ -425,12 +477,16 @@ class System:
         chatter. Use `warnings.simplefilter("ignore", SparseSuggestion)`."""
         if self.is_sparse or self._hinted or self.dim < SPARSE_HINT_DIM:
             return
+        if any(item[0] == "operator" for item in dynamic):
+            self._hinted = True
+            return
         # The union pattern over static + every dynamic piece. Time-independent:
         # a coefficient f(t) scales a piece, it can never create a nonzero where
         # that piece's matrix has a structural zero. Computed once, at most.
         pattern = np.abs(static)
-        for _, mat in dynamic:
-            pattern = pattern + np.abs(mat)
+        for item in dynamic:
+            if item[0] == "coefficient":
+                pattern = pattern + np.abs(item[2])
         fill = np.count_nonzero(pattern) / float(self.dim * self.dim)
         self._hinted = True
         if fill > SPARSE_HINT_MAX_FILL:
@@ -457,11 +513,19 @@ class System:
         static, dynamic, _, _ = self._materialize()
         H = static.copy()
         if self.is_sparse:
-            for coeff, mat in dynamic:
-                H = H + coeff(t) * mat  # csr addition allocates; no in-place form
+            for item in dynamic:
+                if item[0] == "operator":
+                    H = H + item[1].at(t, sparse=True, target_dims=self.subsystems)
+                else:
+                    _, coeff, mat = item
+                    H = H + coeff(t) * mat  # csr addition allocates; no in-place form
             return H
-        for coeff, mat in dynamic:
-            H += coeff(t) * mat  # in-place into the copy of `static`
+        for item in dynamic:
+            if item[0] == "operator":
+                H += item[1].at(t, sparse=False, target_dims=self.subsystems)
+            else:
+                _, coeff, mat = item
+                H += coeff(t) * mat  # in-place into the copy of `static`
         return np.asarray(H)
 
     def _jumps_native(self, t) -> list:
@@ -469,10 +533,18 @@ class System:
         `_h_native`."""
         _, _, jump_static, jump_dynamic = self._materialize()
         if self.is_sparse:
-            return ([L.copy() for L in jump_static]
-                    + [coeff(t) * mat for coeff, mat in jump_dynamic])
-        return ([np.asarray(L) for L in jump_static]
-                + [np.asarray(coeff(t) * mat) for coeff, mat in jump_dynamic])
+            out = [L.copy() for L in jump_static]
+            for item in jump_dynamic:
+                out.append(item[1].at(t, sparse=True, target_dims=self.subsystems)
+                           if item[0] == "operator"
+                            else item[2] * item[1](t))
+            return out
+        out = [np.asarray(L) for L in jump_static]
+        for item in jump_dynamic:
+            out.append(item[1].at(t, sparse=False, target_dims=self.subsystems)
+                       if item[0] == "operator"
+                       else np.asarray(item[1](t) * item[2]))
+        return out
 
     def hamiltonian(self, t):
         """H(t) as a plain numpy array -- ALWAYS, sparse-flagged or not.
@@ -543,6 +615,13 @@ def term(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     key = name if name is not None else f"term{next(_anon_counter)}"
     t = _Term(coeff, ops, term_dims, frame)
     return System(term_dims, groups={key: [t]})
+
+
+def _operator(operator, on, dims, name=None, sparse=False, frame=None) -> System:
+    """Construct a System from a private operator-valued contribution."""
+    key = name if name is not None else f"term{next(_anon_counter)}"
+    contribution = _OperatorTerm(operator, on, dims, frame)
+    return System(dims, groups={key: (contribution,)}, sparse=sparse)
 
 
 def jump(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,

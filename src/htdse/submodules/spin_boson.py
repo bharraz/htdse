@@ -73,7 +73,7 @@ from scipy import sparse as _sp
 from scipy.linalg import expm
 
 from ..core.subsystems import embed
-from ..core.terms import System, plus_hc, term
+from ..core.terms import System, plus_hc, term, _operator
 from .harmonic_oscillator import annihilation, number_operator
 from .spin import sigma_x, sigma_y, sigma_plus
 
@@ -541,22 +541,9 @@ def exact_drive(tones, spins, modes, sparse: bool = False):
         def __repr__(self):
             return f"exact_drive({len(tones)} tone(s), spins={spins}, modes={[md.name for md in modes]})"
 
-        def __add__(self, other):
-            raise TypeError(
-                "exact_drive(...) (lamb_dicke=None) has no '+': sigma_+ (x) D(t) is a "
-                "genuinely t-dependent matrix, not a sum of scalar-coefficient x "
-                "fixed-operator terms, so there is nothing for '+' to compose. Sum "
-                "the Hamiltonians yourself inside a System subclass, or work at "
-                "lamb_dicke=1/2 where the physics IS a sum of terms.")
-
-        def replace(self, **kwargs):
-            raise AttributeError(
-                "exact_drive(...) (lamb_dicke=None) has no .replace(): that's a "
-                "System operation on named term groups, and this rung has none (see "
-                "the '+' error for why). Build a new exact_drive(...) with the "
-                "changed tones/modes instead.")
-
-    return _ExactDrive()
+    provider = _ExactDrive()
+    return _operator(provider._build, on=tuple(subsystems), dims=subsystems,
+                     name="exact_drive", sparse=sparse)
 
 
 def rabi(g, spin, mode, n_max, detuning=0.0, name="rabi") -> System:

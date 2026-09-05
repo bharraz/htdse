@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import htdse as ht
-from htdse import (System, term, jump, plus_hc, hc, replace, without, group,
+from htdse import (System, Unitary, term, jump, plus_hc, hc, replace, without, group,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, evolve, propagator, embed, partial_trace, compare_over,
                    otimes, ket, bra, fidelity, process_fidelity, density_fidelity, quiet, dag,
@@ -105,6 +105,26 @@ manual = (0.5 * w0 * np.kron(sigma_z, np.eye(n_max + 1)) + w * np.kron(I2, nop)
           + g * (np.kron(sigma_plus, a) + np.kron(sigma_minus, a.conj().T)))
 check("JC composition == hand-built otimes", np.allclose(H.hamiltonian(0.0), manual))
 check("registry from names", H.subsystems == {"spin": 2, "mode": n_max + 1})
+
+# Milestone 2: native Systems and their contribution records are immutable.
+_before = H.hamiltonian(0.0).copy()
+try:
+    H.subsystems["spin"] = 3
+    check("System registry is read-only", False)
+except (TypeError, AttributeError):
+    check("System registry is read-only", True)
+try:
+    H.groups["atom"] += H.groups["mode"]
+    check("System groups are read-only", False)
+except (TypeError, AttributeError):
+    check("System groups are read-only", True)
+_incoming = sigma_x.copy()
+_safe = term(_incoming, on="safe")
+_incoming[0, 1] = 99
+check("input operator is copied on construction",
+      np.allclose(_safe.hamiltonian(0), sigma_x))
+check("immutable System preserves materialized physics",
+      np.allclose(H.hamiltonian(0.0), _before))
 
 # order independence up to registry order: mode + atom puts mode factor first
 H2 = mode + atom + jc.replace if False else mode + atom
@@ -674,7 +694,7 @@ check("report is a dict AND prints", _r["rhs_evals"] > 0 and "rhs_evals" in str(
 check("report knows the solved range and segments",
       _r["segments"] >= 1 and "0" in _r["solved_range"])
 check("report names the propagation method", "RK45" in _r["propagation"])
-check("report says the mutation guard is active", _r["mutation_guard"] == "active")
+check("report recognizes immutable Systems", "immutable System" in _r["mutation_guard"])
 check("report carries per-subsystem truncation populations",
       set(_r["truncation"]) == {"mode"} and _r["truncation"]["mode"] < 1e-6)
 # an untouched evolution reports honestly rather than solving to fill the table
@@ -693,12 +713,21 @@ check("report distinguishes exact propagation from an ODE solve",
 # analytic-unitary systems have no solver at all
 check("report handles the analytic-unitary path",
       UnitaryEvolution(AnalyticGate(1.0)).report()["propagation"].startswith("analytic"))
+_callable_unitary = Unitary(lambda t: np.diag([1.0, np.exp(1j * t)]), dim=2,
+                            name="callable-test")
+check("callable Unitary evaluates through __call__ and .unitary",
+      np.allclose(_callable_unitary(0.4), _callable_unitary.unitary(0.4)))
+try:
+    _callable_unitary.dim = 3
+    check("callable Unitary is immutable", False)
+except AttributeError:
+    check("callable Unitary is immutable", True)
 # guard status is reported, not silently assumed
 _Hlam = term(sigma_x, on="q", coeff=lambda t: np.sin(t))
 with quiet():
     _gv = HamiltonianEvolution(_Hlam, ket("0")); _gv.state_at(1.0)
-check("report flags an unavailable mutation guard",
-      _gv.report()["mutation_guard"].startswith("UNAVAILABLE"))
+check("report recognizes immutable Systems with callable coefficients",
+      "immutable System" in _gv.report()["mutation_guard"])
 with quiet():
     _gv2 = HamiltonianEvolution(_Hlam, ket("0"), check_mutation=False); _gv2.state_at(1.0)
 check("report flags a disabled mutation guard",

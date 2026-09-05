@@ -19,6 +19,7 @@ collide with its own module, and `ht.spin_j.identity(...)` since a bare
 from .core.config import quiet, no_truncation_check
 from .core.truncation import TruncationWarning, truncation_populations
 from .core.terms import System, term, jump, plus_hc, hc, replace, without, group, SparseSuggestion
+from .core.unitary import Unitary
 from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
                              DensityMatrixEvolution, LindbladEvolution,
                              evolve, propagator)
@@ -64,7 +65,7 @@ from .submodules.rydberg import rydberg_interaction, dipole_dipole_interaction, 
 
 __all__ = [
     "quiet", "no_truncation_check", "TruncationWarning", "truncation_populations",
-    "System", "term", "jump", "plus_hc", "hc", "replace", "without", "group", "SparseSuggestion",
+    "System", "Unitary", "term", "jump", "plus_hc", "hc", "replace", "without", "group", "SparseSuggestion",
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
     "LindbladEvolution", "evolve", "propagator",
     "embed", "partial_trace", "compare_over", "converged",

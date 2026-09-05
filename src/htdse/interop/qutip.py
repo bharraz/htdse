@@ -115,14 +115,28 @@ def to_qutip(model, include_jumps=True):
         return lambda t, *args, _f=fn, **kw: _f(t)
 
     H = [to_qobj(static, subs)]
-    H += [[to_qobj(mat, subs), wrap(fn)] for fn, mat in dynamic]
+    for item in dynamic:
+        if item[0] == "operator":
+            contribution = item[1]
+            H.append(lambda t, *args, _c=contribution, **kw:
+                     to_qobj(_c.at(t, target_dims=subs), subs))
+        else:
+            _, fn, mat = item
+            H.append([to_qobj(mat, subs), wrap(fn)])
     if len(H) == 1:
         H = H[0]        # purely static: hand back a bare Qobj, not a 1-list
 
     if not include_jumps:
         return H, []
     c_ops = [to_qobj(L, subs) for L in jump_static]
-    c_ops += [[to_qobj(mat, subs), wrap(fn)] for fn, mat in jump_dynamic]
+    for item in jump_dynamic:
+        if item[0] == "operator":
+            contribution = item[1]
+            c_ops.append(lambda t, *args, _c=contribution, **kw:
+                         to_qobj(_c.at(t, target_dims=subs), subs))
+        else:
+            _, fn, mat = item
+            c_ops.append([to_qobj(mat, subs), wrap(fn)])
     return H, c_ops
 
 

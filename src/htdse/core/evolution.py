@@ -1,5 +1,6 @@
 import hashlib
 import pickle
+from collections.abc import Mapping
 import warnings
 
 import numpy as np
@@ -87,7 +88,7 @@ def _is_dissipative(system, t0) -> bool:
     registry when it exists; for a hand-written System, sampling at t0 is
     all we have."""
     structural = getattr(system, "jumps", None)
-    dissipative = bool(structural) if isinstance(structural, dict) else False
+    dissipative = bool(structural) if isinstance(structural, Mapping) else False
     if not dissipative:
         jumps = getattr(system, "jump_operators", None)
         dissipative = callable(jumps) and len(jumps(t0)) > 0
@@ -115,6 +116,8 @@ def _snapshot(system):
     the cost, and it is unavoidable if the check is to be sound -- see
     `check_mutation=False` on the evolution classes to opt out in hot loops."""
     if system is None:
+        return None
+    if getattr(system, "_immutable", False):
         return None
     try:
         raw = pickle.dumps({k: v for k, v in vars(system).items()
@@ -421,6 +424,7 @@ class _Reportable:
             rep["breakpoints"] = len(solver._breakpoints)
             rep["mutation_guard"] = (
                 "disabled (check_mutation=False)" if not solver._check_mutation
+                else "not needed (immutable System)" if getattr(self.system, "_immutable", False)
                 else "active" if solver._system_state is not None
                 else "UNAVAILABLE -- system has unpicklable parameters "
                      "(e.g. lambda coefficients); do not mutate it")
