@@ -39,21 +39,21 @@ pip install -e .
 answers "what are the dynamics at time `t`?" — it implements `hamiltonian(t)` and/or
 `unitary(t)`. Nothing else is required.
 
-`Model` is one *convenient way* to build a System:
-you write your physics as a sum of named terms and it handles the tensor bookkeeping,
-caching, and swapping for you. A hand-written class is the other way, for physics that
-isn't a sum of terms.
+The concrete `System` value is the composable way to build dynamics: write physics as a
+sum of named terms and it handles tensor bookkeeping, caching, and swapping. Closed-form
+and external providers are internal duck-typed implementation details, not public
+framework subclasses.
 
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 50, "nodeSpacing": 40}}}%%
 flowchart TB
     OP["<b>numpy array</b><br/>a Hamiltonian, a ket, a density matrix, a propagator."]
-    MODEL["<b>Model</b> — the convenient path<br/>
+    MODEL["<b>System</b> — the composable path<br/>
     named groups of terms over a registry of subsystems, both dicts keyed by label.<br/>Group labels replace/retrieve/remove physics; subsystem labels fix the embedding order.<br/>Not a matrix — it builds H(t) on demand<br/><i>built by term() / jump() / pauli_sum() / driven_spins() ...</i>"]
 
-    OWN["<b>your own class</b> — the general path for physics that isn't a sum of terms:<br/>a closed-form gate, a wrapper, a bridge<br/><i>ms_closed_form, TrotterizedSystem, as_system(Qobj)</i>"]
+    OWN["<b>internal provider</b> — the implementation path for physics that isn't a sum of terms:<br/>a closed-form gate, a wrapper, a bridge<br/><i>ms_closed_form, TrotterizedSystem, as_system(Qobj)</i>"]
 
-    SYS["<b>System</b> - a Protocol <br/>hamiltonian(t) and/or unitary(t), plus optional jump_operators(t)<br/>"]
+    SYS["<b>System</b> - the concrete dynamics value<br/>named terms, hamiltonian(t), and optional jump_operators(t)<br/>"]
 
     EVOALL["<b>Evolution</b> — every one works the same way<br/><b>you give it:</b> a System, a starting point, and optionally a start time<br/><b>you ask it:</b> state_at(t) for the answer at one time, or at every time in an array<br/>also report() for what the solve did, and trace_out(name) to discard a subsystem<br/>"]
 
@@ -73,10 +73,10 @@ flowchart TB
     EVOALL --> EVO
 ```
 
-Internally a `Model` stores each summand as a private `_Term`, because a coefficient that
+Internally a `System` stores each summand as a private `_Term`, because a coefficient that
 is `f(t)` can't be folded into a matrix until you know `t`. You never construct or see one.
 
-`Model` enables easier system construction with **subsystem names**. Two operators tagged to act on
+`System` enables easier construction with **subsystem names**. Two operators tagged to act on
 `"spin"` act on the same tensor factor, so `+` lines them up and identity-pads
 automatically. You never write `⊗ I` by hand, and no joint matrix exists until an evolution 
 asks for `H(t)`.
@@ -94,13 +94,13 @@ Two ways to build a System:
 
 | Your physics is… | You write… | Examples in the package |
 |---|---|---|
-| a sum of named pieces | **a `Model`** | `driven_spins`, `jaynes_cummings`, `pauli_sum`, `term`, `jump` |
-| a closed-form `U(t)`, or a wrapper | **a class satisfying `System`** | `ms_closed_form`, `TrotterizedSystem`, `as_system` |
+| a sum of named pieces | **a `System`** | `driven_spins`, `jaynes_cummings`, `pauli_sum`, `term`, `jump` |
+| closed-form or external dynamics | **an internal provider** | `ms_closed_form`, `TrotterizedSystem`, `as_system` |
 
-A common pattern for using `Model` would be something like: 
+A common pattern for using `System` would be something like:
 
 ```python
-def my_drive(Omega, eps, delta) -> ht.Model:
+def my_drive(Omega, eps, delta) -> ht.System:
     return (ht.term(0.5 * Omega * (1 + eps) * sigma_x, on="q", name="drive")
             + ht.term(delta * sigma_z, on="q", name="detuning"))
 ```
@@ -112,13 +112,13 @@ When the physics isn't a sum of terms, or a Unitary of specific form, write the 
 
 A shaped resonant pulse is the clearest case. Every `H(t) = (Ω(t)/2)σx` commutes with
 itself at different times, so the time-ordered exponential collapses to the **pulse area**
-— `U(t)` is closed-form and integrating an ODE for it would be wasted work. A `Model`
-cannot express this: a Model is a sum, and it only ever produces `H(t)`.
+— `U(t)` is closed-form and integrating an ODE for it would be wasted work. A term-built
+System is a sum and produces `H(t)`; closed-form providers remain internal.
 
 ```python
 from scipy.special import erf
 
-class GaussianPulse(ht.System):
+class GaussianPulse:
     """Resonant Gaussian pulse. All H(t) commute, so U depends only on the
     accumulated area theta(t) = integral of Omega -- no ODE needed."""
     def __init__(self, Omega0, sigma):
@@ -142,7 +142,7 @@ Dissipation is the other case. Add `jump_operators(t)` and `LindbladEvolution` p
 — a bath too large to model as a subsystem, with a rate you can make time-dependent:
 
 ```python
-class Heating(ht.System):
+class Heating:
     """Motional heating whose rate ramps during the gate."""
     def __init__(self, n_max, gamma):
         self.n_max, self.gamma = n_max, gamma
@@ -160,16 +160,16 @@ Two optional hints — `breakpoints()` and `piecewise_constant` — tell the sol
 `H(t)` jumps and whether it is constant between jumps. Declaring both buys exact
 propagation instead of adaptive stepping, which is how `TrotterizedSystem` works.
 
-Inheriting `ht.System` is optional: it's a `Protocol`, and the evolutions duck-type every
-attribute they read. Subclassing `ht.System` buys you the `H()` alias, a readable `__repr__`, and clear
-errors instead of `AttributeError`.
+Providers implement only the methods they need; the solver consumes them through a
+private duck-typed capability check. Users compose ordinary `System` values with free
+functions such as `ht.replace`, `ht.without`, and `ht.group`.
 
-Leveraging the conveniences baked into the `Model` class when writing your own system is easy: 
+Leveraging the conveniences baked into the `System` value when composing physics is easy:
 - **Sparce Matrices**: The solver branches on whether the matrix *you returned* is sparse, so return a CSR and you get the sparce path.
 - **Truncation Guard**: expose a `subsystems` dict (as `ms_closed_form` does) or pass `subsystems=` to the evolution.
 
-When writing your own system, what you give up is the `Model` algebra: `+`,
-`.replace()`, `.without()`, automatic identity padding, and the materialization cache. For
+When writing an internal provider, it does not have the term algebra: `+`,
+`ht.replace()`, `ht.without()`, automatic identity padding, and the materialization cache. For
 a closed-form `U(t)` most of that is moot anyway, and `embed()` is still available as a standalone utility function.
 
 Everything in `submodules/` is written against this same protocol, with no privileged
@@ -197,7 +197,7 @@ system mutated after binding. Population reaching the top of a truncated ladder 
 
 ```
 src/htdse/
-  core/            # System protocol, terms (composable Models), the four evolution
+  core/            # concrete System, terms, and the four evolution
                    # classes, embed/partial_trace, compare_over, converged,
                    # truncation guard, plotting, the READ layer (project/closure/
                    # generator/paulis/max_eigenphase/show/expect)

@@ -142,7 +142,7 @@ def show(H, t: float = 0.0, tol: float = 1e-10):
     table when dim = 2^n (via `paulis`), otherwise the rounded matrix with
     near-zero entries cleaned to exactly 0.
 
-    H: a System/Model (its `.hamiltonian(t)` is called) or a plain array --
+    H: a System (its `.hamiltonian(t)` is called) or a plain array --
     either way you get a look at the actual numbers without materializing
     and formatting it by hand first."""
     M = H.hamiltonian(t) if hasattr(H, "hamiltonian") else H

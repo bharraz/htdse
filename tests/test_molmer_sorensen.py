@@ -99,7 +99,7 @@ Th = gate.geometric_phase(T)
 Th_ana = c * c * (np.sin(delta * T) / delta ** 2 - T / delta)
 check("geometric phase matches analytic", abs(Th[0, 1] - Th_ana) < 1e-6 * abs(Th_ana))
 
-print("== composability: recoil MS + a cavity mode via plain Model + ==")
+print("== composability: recoil MS + a cavity mode via plain System + ==")
 H_cavity = jaynes_cummings(0.3, spin="q0", mode="cavity", n_max=4)
 H_combo = H1 + H_cavity
 check("driven_spins(...) + jaynes_cummings(..., mode='cavity') composes and is Hermitian",
@@ -336,7 +336,7 @@ _H2_cross = driven_spins([Tone(offset=1.0, amp=0.5)], ["q0"],
                          [Mode(5.0, 0.12, 5, "m1"), Mode(8.0, 0.1, 5, "m2")], lamb_dicke=2)
 _no_cross_groups = {k: v for k, v in _H2_cross.groups.items() if not k.startswith("ld2x_")}
 import htdse.core.terms as _ct
-_H2_no_cross = _ct.Model(_H2_cross.subsystems, _no_cross_groups, _H2_cross.jumps)
+_H2_no_cross = _ct.System(_H2_cross.subsystems, _no_cross_groups, _H2_cross.jumps)
 check("cross-mode term is a real (nonzero) effect, not a no-op",
       np.max(np.abs(np.asarray(_H2_cross.hamiltonian(0.3))
                     - np.asarray(_H2_no_cross.hamiltonian(0.3)))) > 1e-6)

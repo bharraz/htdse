@@ -13,7 +13,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import htdse as ht
-from htdse import (System, Model, term, jump, plus_hc, hc,
+from htdse import (System, term, jump, plus_hc, hc, replace, without, group,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, evolve, propagator, embed, partial_trace, compare_over,
                    otimes, ket, bra, fidelity, process_fidelity, density_fidelity, quiet, dag,
@@ -44,7 +44,7 @@ def rand_herm(d):
     return (M + M.conj().T) / 2
 
 
-class RabiDrive(System):
+class RabiDrive:
     def __init__(self, Omega, eps=0.0, delta=0.0):
         self.Omega, self.eps, self.delta = Omega, eps, delta
 
@@ -119,20 +119,23 @@ check("f(t) coefficient", np.allclose(Hd.hamiltonian(0.7), np.sin(0.7) * sigma_x
 check("scalar *", np.allclose((2.0 * atom).hamiltonian(0), w0 * sigma_z))
 check("subtraction", np.allclose((atom - atom).hamiltonian(0), np.zeros((2, 2))))
 
-# replace(): swap the drive, including one that brings in a NEW subsystem
+# free transformations: swap the drive, including one that brings in a NEW subsystem
 drive = term(0.5 * sigma_x, on="spin", name="drive")
 model = atom + drive
 noisy = term(0.55 * sigma_x, on="spin", name="whatever") \
     + term(0.03 * sigma_z, on="spectator", name="leak")
-swapped = model.replace(drive=noisy)
+check("named transformations are exported",
+      all(getattr(ht, name) is fn for name, fn in
+          [("replace", replace), ("without", without), ("group", group)]))
+swapped = replace(model, drive=noisy)
 check("replace swaps the group",
-      np.allclose(swapped.group("drive").hamiltonian(0)[:2, :2] * 0 + 0, 0)
+      np.allclose(group(swapped, "drive").hamiltonian(0)[:2, :2] * 0 + 0, 0)
       and "spectator" in swapped.subsystems)
 expected_sw = (0.5 * w0 * np.kron(sigma_z, I2)
                + 0.55 * np.kron(sigma_x, I2) + 0.03 * np.kron(I2, sigma_z))
 check("replace materializes correctly", np.allclose(swapped.hamiltonian(0), expected_sw))
 check("without() drops a group",
-      np.allclose(model.without("drive").hamiltonian(0), 0.5 * w0 * sigma_z))
+      np.allclose(without(model, "drive").hamiltonian(0), 0.5 * w0 * sigma_z))
 
 # dimension conflict by name must raise
 try:
@@ -202,7 +205,7 @@ except ValueError:
     check("dissipative mech rejected by closed-system class", True)
 
 
-class BadMech(System):
+class BadMech:
     def hamiltonian(self, t):
         return np.array([[0, 1], [0, 0]], dtype=complex)  # not Hermitian
 
@@ -233,7 +236,7 @@ except Exception:
 print("== Trotter: breakpoints + exact expm path ==")
 
 
-class Ramp(System):
+class Ramp:
     """H(t) = (1 - t/T) X + (t/T) Z -- smooth ramp to Trotterize."""
     def __init__(self, T):
         self.T = T
@@ -273,7 +276,7 @@ check("expm path unitarity defect tiny", Uev.unitarity_defect(T) < 1e-12)
 print("== analytic-unitary system (dual primitive wired) ==")
 
 
-class AnalyticGate(System):
+class AnalyticGate:
     """Defined as a gate only: U(t) = exp(-i (Omega/2) X t) (e.g. an RWA result)."""
     def __init__(self, Omega):
         self.Omega = Omega
@@ -440,7 +443,7 @@ for dims_s, inv in [({"A": 2, "B": 3, "C": 2}, ("A", "C")),
     check(f"sparse embed == dense embed on {inv} of {list(dims_s)}",
           sp.issparse(sparse_e) and np.allclose(sparse_e.toarray(), dense_e))
 
-print("== sparse: Model materialization + flag propagation ==")
+print("== sparse: System materialization + flag propagation ==")
 Hs = H.sparse()  # the JC model from above
 # the PUBLIC accessor always hands back a plain array -- storage is backend
 check("sparse model's public hamiltonian() is a plain ndarray",
@@ -464,8 +467,8 @@ check("sparse flag sticky under + (other side)", (atom + mode.sparse()).is_spars
 check("sparse flag survives *, -, dag, plus_hc, replace, without, group",
       (2.0 * Hs).is_sparse and (Hs - atom).is_sparse and Hs.dag().is_sparse
       and plus_hc(Hs).is_sparse
-      and (atom + drive).sparse().replace(drive=noisy).is_sparse
-      and Hs.without("jc").is_sparse and Hs.group("atom").is_sparse)
+      and replace((atom + drive).sparse(), drive=noisy).is_sparse
+      and without(Hs, "jc").is_sparse and group(Hs, "atom").is_sparse)
 check("sparse(False) toggles back to a dense ndarray",
       not Hs.sparse(False).is_sparse
       and isinstance(Hs.sparse(False).hamiltonian(0.0), np.ndarray)
@@ -519,7 +522,7 @@ except MemoryError as e:
           "400000x400000" in str(e) and "GB" in str(e))
 
 # a System returning a SPARSE unitary used to explode with an AxisError
-class SparseGate(System):
+class SparseGate:
     def __init__(self):
         self.subsystems = {"q0": 2, "q1": 2}
         p = np.arange(4); p[-2:] = p[-2:][::-1]
@@ -736,26 +739,26 @@ else:
     except ValueError:
         check("to_qobj rejects a registry that doesn't fit the array", True)
 
-    # a static Model becomes a bare Qobj; qutip's solve matches htdse's
+    # a static System becomes a bare Qobj; qutip's solve matches htdse's
     _Hq, _c = to_qutip(_H)
-    check("static Model -> bare Qobj, no c_ops", isinstance(_Hq, _qt.Qobj) and _c == [])
+    check("static System -> bare Qobj, no c_ops", isinstance(_Hq, _qt.Qobj) and _c == [])
     _r = _qt.sesolve(_Hq, to_qobj(_psi0, _H.subsystems), _ts)
     _qp = np.abs(np.array([s.full().ravel() for s in _r.states]) @ _psi0.conj()) ** 2
-    check("qutip sesolve == htdse on the same composed Model",
+    check("qutip sesolve == htdse on the same composed System",
           np.max(np.abs(_qp - _ref)) < 1e-5)
 
-    # a time-dependent Model becomes qutip's NATIVE [H0, [H1, f]] list -- its fast
+    # a time-dependent System becomes qutip's NATIVE [H0, [H1, f]] list -- its fast
     # path -- not a callable returning a Qobj (which is its slow path)
     _Ht = _H + term(0.3 * sigma_x, on="spin", name="drive", coeff=lambda t: np.cos(1.7 * t))
     _Hq2, _ = to_qutip(_Ht)
-    check("time-dependent Model -> qutip's native [H0, [H1, f]] form",
+    check("time-dependent System -> qutip's native [H0, [H1, f]] form",
           isinstance(_Hq2, list) and isinstance(_Hq2[1], list)
           and isinstance(_Hq2[1][0], _qt.Qobj) and callable(_Hq2[1][1]))
     _r2 = _qt.sesolve(_Hq2, to_qobj(_psi0, _Ht.subsystems), _ts)
     _q2 = np.abs(np.array([s.full().ravel() for s in _r2.states]) @ _psi0.conj()) ** 2
     with quiet():
         _h2 = np.abs(HamiltonianEvolution(_Ht, _psi0).state_at(_ts) @ _psi0.conj()) ** 2
-    check("qutip == htdse on a time-dependent Model", np.max(np.abs(_q2 - _h2)) < 1e-5)
+    check("qutip == htdse on a time-dependent System", np.max(np.abs(_q2 - _h2)) < 1e-5)
 
     # jumps -> c_ops
     _Ho = _H + jump(_a, on="mode", coeff=np.sqrt(0.3), name="decay")
@@ -807,7 +810,7 @@ check("hc(h) is just h.dag(): h + hc(h) == plus_hc(h)",
 
 with redirect_stdout(io.StringIO()) as _buf:
     show(term(0.5 * sigma_z, on="q") + term(0.3 * sigma_x, on="q"))
-check("show() on a qubit-only Model prints the Pauli table", "Z" in _buf.getvalue())
+check("show() on a qubit-only System prints the Pauli table", "Z" in _buf.getvalue())
 with redirect_stdout(io.StringIO()) as _buf2:
     show(np.diag([1.0, 2.0]).astype(complex))
 check("show() on a non-2^n array falls back to the matrix", "2x2" in _buf2.getvalue())
@@ -815,7 +818,7 @@ check("show() on a non-2^n array falls back to the matrix", "2x2" in _buf2.getva
 _ax = plot_matrix(term(0.5 * sigma_x, on="q").hamiltonian(0), kind="abs")
 check("plot_matrix runs (abs)", _ax is not None)
 _ax2 = plot_matrix(term(0.5 * sigma_x, on="q"), kind="phase")
-check("plot_matrix runs on a Model directly (phase)", _ax2 is not None)
+check("plot_matrix runs on a System directly (phase)", _ax2 is not None)
 
 print("== READ layer: project, closure, generator, paulis, max_eigenphase ==")
 from htdse.submodules.molmer_sorensen import ideal_gate

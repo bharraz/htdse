@@ -90,7 +90,7 @@ def plot_matrix(M, t=0.0, kind="abs", ax=None):
     sanity check for a Hamiltonian or a gate, before or instead of solving
     anything.
 
-    M: a System/Model (`.hamiltonian(t)` is called) or a plain array.
+    M: a System (`.hamiltonian(t)` is called) or a plain array.
     kind: "abs" (|M_ij|, default), "real"/"imag" (signed, diverging colormap
     centered at 0), or "phase" (arg(M_ij), shown only where |M_ij| is
     non-negligible -- phase of a numerically-zero entry is meaningless noise).

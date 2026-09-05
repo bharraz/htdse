@@ -4,7 +4,7 @@ This is the transparency document: for each layer of the package, the physics it
 implements, the functions that implement it, and the numerical considerations. Read top
 to bottom once; after that the section headers work as a reference.
 
-Prerequisite vocabulary — *subsystem, term, group, registry, Model, System* — is
+Prerequisite vocabulary — *subsystem, term, group, registry, System* — is
 defined once, in the hierarchy diagram of the [README](README.md). For which functions
 to call in what order, see [GUIDE.md](GUIDE.md).
 
@@ -49,7 +49,7 @@ Considerations baked into the solver (`core/evolution.py::_ExtendableSolver`):
 - **Verbosity.** Every real integration prints (system, range, method, tolerances,
   step/eval counts). Wrap optimizer loops in `with htdse.quiet():`.
 
-**Sparse storage (`Model.sparse()`).** A term-layer Hamiltonian is a sum of embedded
+**Sparse storage (`System.sparse()`).** A term-layer Hamiltonian is a sum of embedded
 local operators — Paulis, ladder operators — so its joint matrix is extremely sparse
 (fill ~10⁻² at dim 10³, ~10⁻³ at 10⁴). `H.sparse()` flags the model to materialize as
 scipy CSR instead of dense ndarrays: each term is embedded via sparse Kronecker products
@@ -280,7 +280,7 @@ $$ H(t) = \sum_j \Omega_j(t)\cos(\mu t+\phi_j)\Big[\underbrace{\sigma_{\phi_j}}_
 \;-\; \underbrace{\tfrac{\eta_j^2}{2}\,\sigma_{\phi_j}\big(a^2 e^{-2i\nu t} + a^{\dagger 2} e^{2i\nu t} + 2\hat n + 1\big)}_{\eta^2}\Big] $$
 
 `driven_spins(..., lamb_dicke=1)` keeps through $\eta^1$; `lamb_dicke=2` through $\eta^2$.
-Both return term-layer `Model`s with **per-ion, per-tone groups** `carrier_qj_tonek`,
+Both return term-layer `System`s with **per-ion, per-tone groups** `carrier_qj_tonek`,
 `sdf_qj_modem_tonek`, `ld2_qj_modem_tonek` — so dropping the carrier, miscalibrating one
 ion, or swapping a drive is a group operation. Numerical note: these carry oscillations at
 $\mu$ and $2\nu$, so the ODE solver has to resolve the trap frequency — cost grows with
@@ -304,9 +304,9 @@ product, at random parameters, away from the same Fock-truncation-edge artifact 
 single-mode term already has (`tests/test_molmer_sorensen.py`).
 
 **Level: exact, `lamb_dicke=None`.** No expansion of $e^{i\eta X(t)}$ at all —
-`driven_spins(..., lamb_dicke=None)` returns a `System`, not a `Model` (`sigma_+ (x) D(t)`
+`driven_spins(..., lamb_dicke=None)` returns an internal provider (`sigma_+ (x) D(t)`
 is a genuinely t-dependent matrix, not a sum of scalar-coefficient × fixed-operator terms,
-so this rung has no `+`/`.replace()`). Computed via the displacement-operator identity
+so this rung has no `+`/`replace()`). Computed via the displacement-operator identity
 $e^{i\eta X(t)} = R(\nu t)\,D(i\eta)\,R(\nu t)^\dagger$, $R(\theta)=e^{i\theta a^\dagger a}$
 diagonal — one `expm` per (spin, mode) at construction, $O(d^2)$ per call. This is the
 reference the Lamb-Dicke expansion is checked against: the carrier Rabi frequency on Fock

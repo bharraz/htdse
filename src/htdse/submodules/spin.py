@@ -9,7 +9,7 @@ import re
 
 import numpy as np
 
-from ..core.terms import Model, term
+from ..core.terms import System, term
 
 # Pauli matrices and identity for the spin-1/2 sector.
 sigma_x = np.array([[0, 1], [1, 0]], dtype=complex)
@@ -27,8 +27,8 @@ _TOKEN = re.compile(r"([XYZI+\-])(\d+)")
 
 
 def pauli_term(spec: str, coeff=1.0, name=None, n_qubits=None,
-               frame=None, prefix="q") -> Model:
-    """One product of single-qubit Paulis as a composable term-layer `Model`.
+               frame=None, prefix="q") -> System:
+    """One product of single-qubit Paulis as a composable term-layer `System`.
 
     spec: e.g. "X0X1" (sigma_x on qubits 0 and 1), "Z2", "+0-1". Qubit i
     becomes subsystem "q{i}", so pauli terms compose with anything else by
@@ -55,22 +55,22 @@ def pauli_term(spec: str, coeff=1.0, name=None, n_qubits=None,
         # register (q2, q0, q1) instead of (q0, q1, q2), silently swapping
         # which physical qubit occupies which tensor slot. Seeding first keeps
         # the natural q0..q{n-1} order regardless of which qubits `spec` touches.
-        h = Model({f"{prefix}{i}": 2 for i in range(n_qubits)}) + h
+        h = System({f"{prefix}{i}": 2 for i in range(n_qubits)}) + h
     return h
 
 
-def pauli_sum(spec: str, n_qubits=None, frame=None, prefix="q") -> Model:
+def pauli_sum(spec: str, n_qubits=None, frame=None, prefix="q") -> System:
     """A sum of Pauli terms from one human-readable string:
 
         pauli_sum("0.5 X0X1 + 0.3 Z0 - Z1")
 
     Each summand is "[coefficient] SPEC" (coefficient defaults to 1); the
-    result is an ordinary composable `Model` (each summand its own
+    result is an ordinary composable `System` (each summand its own
     auto-named group). For swappable groups build the summands individually
     with pauli_term(..., name=...) and `+` them.
     """
-    total = Model({f"{prefix}{i}": 2 for i in range(n_qubits)}) if n_qubits \
-        else Model()
+    total = System({f"{prefix}{i}": 2 for i in range(n_qubits)}) if n_qubits \
+        else System()
     # Normalize "a - b" and "a -b" into "a + -b", then split on "+". The minus
     # must be preceded by whitespace to be a subtraction: a '-' with no space
     # before it is the sigma_minus token ("+0-1").

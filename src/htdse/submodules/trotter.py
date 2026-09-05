@@ -10,10 +10,9 @@ of smooth-interpolant artifacts, while remaining just another `H(t)`.
 """
 import numpy as np
 
-from ..core.system import System
 
 
-class TrotterizedSystem(System):
+class TrotterizedSystem:
     """Piecewise-constant discretization of `inner` over [t_start, t_stop]
     in `n_steps` equal steps; H on each step is inner.hamiltonian at the step
     midpoint (`sample="midpoint"`, second-order accurate) or left edge

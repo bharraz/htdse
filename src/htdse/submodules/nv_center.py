@@ -19,11 +19,13 @@ axes are fixed to the crystal, not built from a good total-F quantum number.
 """
 import numpy as np
 
+from ..core.terms import System
+
 from ..core.terms import term
 from .spin_j import spin_operators
 
 
-def zero_field_splitting(D, E=0.0, spin="e") -> "Model":
+def zero_field_splitting(D, E=0.0, spin="e") -> "System":
     """D(Sz^2 - S(S+1)/3) + E(Sx^2-Sy^2) for the S=1 electronic ground
     state named `spin`. The -S(S+1)/3 piece only shifts the overall energy
     zero (it's proportional to identity) but is kept so `D` matches the
@@ -36,7 +38,7 @@ def zero_field_splitting(D, E=0.0, spin="e") -> "Model":
     return H
 
 
-def zeeman(g, Bz, spin="e", J=1.0) -> "Model":
+def zeeman(g, Bz, spin="e", J=1.0) -> "System":
     """g*Bz*Jz -- axial Zeeman shift for a spin-J subsystem (electron: J=1,
     g~2.003; a nuclear spin: J=I, g=g_I). Assumes the field is along the
     quantization (NV) axis -- off-axis field mixing is not modeled."""
@@ -44,7 +46,7 @@ def zeeman(g, Bz, spin="e", J=1.0) -> "Model":
     return term(Jz, on=spin, coeff=g * Bz, name=f"zeeman_{spin}")
 
 
-def hyperfine_tensor(A_parallel, A_perp, electron="e", nuclear="n", I=1.0) -> "Model":
+def hyperfine_tensor(A_parallel, A_perp, electron="e", nuclear="n", I=1.0) -> "System":
     """Axially-symmetric dipolar hyperfine coupling in the UNCOUPLED
     electron(x)nuclear product basis:
 
@@ -60,7 +62,7 @@ def hyperfine_tensor(A_parallel, A_perp, electron="e", nuclear="n", I=1.0) -> "M
     return H
 
 
-def isc_dephasing(rates, spin="e") -> "Model":
+def isc_dephasing(rates, spin="e") -> "System":
     """A simplified proxy for NV's spin-dependent optical readout contrast:
     one pure-dephasing-style Lindblad jump per m_s sublevel (m_s=+1,0,-1,
     matching spin_operators(1.0)'s index order), each built from that
@@ -110,7 +112,7 @@ class NVCenter:
             d *= v
         return d
 
-    def hamiltonian(self, Bz=0.0, g_e=2.0028, hyperfine=None) -> "Model":
+    def hamiltonian(self, Bz=0.0, g_e=2.0028, hyperfine=None) -> "System":
         """hyperfine: optional {nuclear_name: (A_parallel, A_perp)} for any
         subset of self.nuclear_spins."""
         H = zero_field_splitting(self.D, self.E, spin=self.e)

@@ -1,7 +1,7 @@
 """htdse -- target-vs-reality Hamiltonian simulation.
 
 Everything a physicist reaches for interactively is importable from the top --
-the generic engine (Model/term/the Evolution classes) AND the physics vocabulary
+the generic engine (System/term/the Evolution classes) AND the physics vocabulary
 (Paulis, ladder operators, the spin-boson/Mølmer–Sørensen builders):
 
     import htdse as ht
@@ -18,8 +18,7 @@ collide with its own module, and `ht.spin_j.identity(...)` since a bare
 """
 from .core.config import quiet, no_truncation_check
 from .core.truncation import TruncationWarning, truncation_populations
-from .core.system import System
-from .core.terms import Model, term, jump, plus_hc, hc, SparseSuggestion
+from .core.terms import System, term, jump, plus_hc, hc, replace, without, group, SparseSuggestion
 from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
                              DensityMatrixEvolution, LindbladEvolution,
                              evolve, propagator)
@@ -65,7 +64,7 @@ from .submodules.rydberg import rydberg_interaction, dipole_dipole_interaction, 
 
 __all__ = [
     "quiet", "no_truncation_check", "TruncationWarning", "truncation_populations",
-    "System", "Model", "term", "jump", "plus_hc", "hc", "SparseSuggestion",
+    "System", "term", "jump", "plus_hc", "hc", "replace", "without", "group", "SparseSuggestion",
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
     "LindbladEvolution", "evolve", "propagator",
     "embed", "partial_trace", "compare_over", "converged",

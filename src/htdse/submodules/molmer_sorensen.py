@@ -64,7 +64,6 @@ from scipy.linalg import expm
 from scipy.sparse.linalg import expm as _sparse_expm
 
 from ..core.subsystems import embed
-from ..core.system import System
 from .harmonic_oscillator import annihilation
 from .spin_boson import Mode, Tone, _as_consts, _as_funcs, _eval, _sigma
 
@@ -150,7 +149,7 @@ def _cumtrapz(y, x):
 
 def ms_closed_form(spins, modes, delta, amplitudes=1.0, phases=0.0,
                    points_per_period=400, *, motion_phases=0.0,
-                   sparse=False) -> System:
+                   sparse=False):
     """Exact (terminated-Magnus) unitary of the post-RWA MS spin-dependent
     force. Defined as a GATE (`.unitary(t)` only) -- `UnitaryEvolution` and
     `DensityMatrixEvolution` consume it directly with no ODE solve.
@@ -180,7 +179,7 @@ def ms_closed_form(spins, modes, delta, amplitudes=1.0, phases=0.0,
     sparse: embed the spin/mode operators as scipy CSR and exponentiate with
         `scipy.sparse.linalg.expm` instead of a dense `scipy.linalg.expm`.
         `.unitary(t)` then returns a CSR matrix (sparse in, sparse out, same
-        convention as `Model.sparse()`) -- call `.toarray()` if you need the
+        convention as `System.sparse()`) -- call `.toarray()` if you need the
         dense propagator.
 
     Returned object's helpers: `.alpha(t)` / `.alpha_trajectory(ts)` (per-ion,
@@ -248,7 +247,7 @@ def ms_closed_form(spins, modes, delta, amplitudes=1.0, phases=0.0,
         Theta = np.trapezoid(integrand, grid, axis=-1)      # (N, N)
         return alpha, Theta
 
-    class _MSGate(System):
+    class _MSGate:
         def __init__(self):
             self.subsystems = dict(subsystems)
 
@@ -323,7 +322,7 @@ def ms_closed_form(spins, modes, delta, amplitudes=1.0, phases=0.0,
 
 
 def ideal_gate(n_ions, eta, delta, Omega, n_max, participation=None,
-               sparse=False) -> System:
+               sparse=False):
     """The common case, in one call: an ideal (constant amplitude, zero spin
     phase) symmetric two-tone MS gate on `n_ions` ions, one mode -- the
     closed-form gate to reach for FIRST, before composing tones/modes by hand

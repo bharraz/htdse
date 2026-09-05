@@ -73,8 +73,7 @@ from scipy import sparse as _sp
 from scipy.linalg import expm
 
 from ..core.subsystems import embed
-from ..core.system import System
-from ..core.terms import Model, plus_hc, term
+from ..core.terms import System, plus_hc, term
 from .harmonic_oscillator import annihilation, number_operator
 from .spin import sigma_x, sigma_y, sigma_plus
 
@@ -255,7 +254,7 @@ def _norm_mode(md: Mode, n_spins: int) -> Mode:
 def _tone_group(H, q, j, modes, ops, mu, amp_fn, phase_fn, lamb_dicke, rwa, tag):
     """Add tone (offset `mu`, amplitude `amp_fn`, phase `phase_fn`)'s
     contribution for spin `q` (index j into the modes' per-spin eta arrays)
-    to Model H, at the given `lamb_dicke` order (1 or 2) and RWA setting."""
+    to System H, at the given `lamb_dicke` order (1 or 2) and RWA setting."""
     if rwa:
         if lamb_dicke != 1:
             raise ValueError("rwa=True is only defined at lamb_dicke=1 -- the "
@@ -403,7 +402,7 @@ def _tone_group(H, q, j, modes, ops, mu, amp_fn, phase_fn, lamb_dicke, rwa, tag)
 # ---------------------------------------------------------------------------
 
 def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None,
-                 sparse=False) -> Model:
+                 sparse=False):
     """The Hamiltonian of `spins` driven by `tones`, coupled to `modes`, at
     Lamb-Dicke order `lamb_dicke` (1 or 2; use the closed-form gate or the
     exact builder for the un-expanded Hamiltonian). See the module docstring
@@ -416,7 +415,7 @@ def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None,
     modes: list of `Mode`.
     sparse: at `lamb_dicke=1/2` this is just `driven_spins(...).sparse()` done
         for you; at `lamb_dicke=None` it is the only way to get a sparse
-        `exact_drive` (that rung has no `Model` to call `.sparse()` on
+        `exact_drive` (that rung has no term-built System to call `.sparse()` on
         afterward -- see `exact_drive`).
     """
     for md in modes:
@@ -431,7 +430,7 @@ def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None,
     n = len(spins)
     modes = [_norm_mode(md, n) for md in modes]
     subs = {**{q: 2 for q in spins}, **{md.name: md.n_max + 1 for md in modes}}
-    H = Model(subs).sparse(sparse)
+    H = System(subs).sparse(sparse)
     ops = {md.name: (annihilation(md.n_max), annihilation(md.n_max).conj().T)
            for md in modes}
     for k, tone in enumerate(tones):
@@ -447,7 +446,7 @@ def driven_spins(tones, spins, modes, lamb_dicke=1, rwa=False, prefix=None,
 # linear/dipole coupling -- NOT derived from driven_spins (see module docstring)
 # ---------------------------------------------------------------------------
 
-def jaynes_cummings(g, spin, mode, n_max, detuning=0.0, name="jc") -> Model:
+def jaynes_cummings(g, spin, mode, n_max, detuning=0.0, name="jc") -> System:
     """H = detuning * a^dag a + g (sigma_+ a + h.c.) -- the resonant (RWA)
     dipole coupling of one spin to one bosonic mode. `g` may be a scalar or
     f(t). This is the `lamb_dicke=1, rwa=True` limit of a red-sideband tone,
@@ -459,11 +458,11 @@ def jaynes_cummings(g, spin, mode, n_max, detuning=0.0, name="jc") -> Model:
     return H
 
 
-def exact_drive(tones, spins, modes, sparse: bool = False) -> System:
+def exact_drive(tones, spins, modes, sparse: bool = False):
     """The un-expanded, un-RWA'd Hamiltonian: no Lamb-Dicke expansion of
     `e^{i eta X(t)}`, at all -- this is `driven_spins(..., lamb_dicke=None)`.
 
-    Returns a `System`, not a `Model`: `sigma_+ (x) D(t)` is a genuinely
+    Returns an internal provider: `sigma_+ (x) D(t)` is a genuinely
     t-dependent matrix, not a sum of (scalar coefficient) x (fixed operator),
     so this rung has no `+` / `.replace()`. That is a property of the physics
     at this rung, not a limitation being papered over.
@@ -475,9 +474,9 @@ def exact_drive(tones, spins, modes, sparse: bool = False) -> System:
 
     sparse: embed `sigma_+` and the displacement block as scipy CSR instead of
         dense arrays, so `.hamiltonian(t)`'s O(dim^2) cost becomes O(nnz).
-        There is no `.sparse()` to call afterward the way a `Model` has --
-        this rung has no `Model` underneath -- so it must be chosen here.
-        `.hamiltonian(t)` still densifies (same contract as `Model`); the
+        There is no `.sparse()` to call afterward the way a term-built System has --
+        this rung has no term-built System underneath -- so it must be chosen here.
+        `.hamiltonian(t)` still densifies (same contract as System); the
         solver reads sparse `H(t)` from `._h_native` instead.
     """
     n = len(spins)
@@ -500,7 +499,7 @@ def exact_drive(tones, spins, modes, sparse: bool = False) -> System:
             out = Dm if out is None else np.kron(out, Dm)
         return out
 
-    class _ExactDrive(System):
+    class _ExactDrive:
         def __init__(self):
             self.subsystems = dict(subsystems)
 
@@ -553,14 +552,14 @@ def exact_drive(tones, spins, modes, sparse: bool = False) -> System:
         def replace(self, **kwargs):
             raise AttributeError(
                 "exact_drive(...) (lamb_dicke=None) has no .replace(): that's a "
-                "Model operation on named term groups, and this rung has none (see "
+                "System operation on named term groups, and this rung has none (see "
                 "the '+' error for why). Build a new exact_drive(...) with the "
                 "changed tones/modes instead.")
 
     return _ExactDrive()
 
 
-def rabi(g, spin, mode, n_max, detuning=0.0, name="rabi") -> Model:
+def rabi(g, spin, mode, n_max, detuning=0.0, name="rabi") -> System:
     """H = detuning * a^dag a + g sigma_x (x) (a + a^dag) -- the quantum Rabi
     model: the dipole coupling WITHOUT the rotating-wave approximation
     (Jaynes-Cummings + anti-Jaynes-Cummings). `g` may be a scalar or f(t)."""

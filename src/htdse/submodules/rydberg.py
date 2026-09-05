@@ -36,7 +36,7 @@ def _pair_spins(positions, spins, prefix):
     return positions, spins
 
 
-def rydberg_interaction(positions, C6, spins=None, prefix="q", state="0") -> "Model":
+def rydberg_interaction(positions, C6, spins=None, prefix="q", state="0") -> "System":
     """Pairwise van der Waals interaction between Rydberg-state occupations:
 
         H = sum_{i<j} (C6 / |r_i - r_j|^6) * n_i * n_j
@@ -58,7 +58,7 @@ def rydberg_interaction(positions, C6, spins=None, prefix="q", state="0") -> "Mo
     return H
 
 
-def dipole_dipole_interaction(positions, C3, spins=None, prefix="q") -> "Model":
+def dipole_dipole_interaction(positions, C3, spins=None, prefix="q") -> "System":
     """Resonant dipole-dipole (Foerster) exchange between two atoms' Rydberg
     states:
 

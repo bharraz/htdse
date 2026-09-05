@@ -6,7 +6,7 @@ this module, and the error if it is missing says so plainly.
 The whole bridge is small because both sides are matrices underneath. The one
 real difference is how the tensor structure is recorded:
 
-    htdse   Model.subsystems   {"spin": 2, "mode": 13}    ordered dict, NAMED
+    htdse   System.subsystems  {"spin": 2, "mode": 13}    ordered dict, NAMED
     qutip   Qobj.dims          [[2, 13], [2, 13]]         nested list, POSITIONAL
 
 Same information; htdse's is strictly richer, since the names survive. The
@@ -90,7 +90,7 @@ def from_qobj(qobj, names=None):
 
 
 def to_qutip(model, include_jumps=True):
-    """htdse `Model` -> (H, c_ops) in qutip's own time-dependent format.
+    """htdse `System` -> (H, c_ops) in qutip's own time-dependent format.
 
     Returns H as `[H0, [H1, f1], [H2, f2], ...]` -- qutip's NATIVE list form,
     not a Python callback returning a Qobj. That matters: a callable-returning-
@@ -137,7 +137,6 @@ def as_system(source, subsystems=None, jumps=None):
                  convention (== qutip's).
     """
     qutip = _qt()
-    from ..core.system import System
 
     dims = list(source.dims[0])
     if subsystems is None:
@@ -148,7 +147,7 @@ def as_system(source, subsystems=None, jumps=None):
     # constant operator as if it were a time-dependent one and raise.
     time_dependent = isinstance(source, qutip.QobjEvo)
 
-    class _QutipSystem(System):
+    class _QutipSystem:
         def __init__(self):
             self.subsystems = dict(subsystems)
             self.source = source

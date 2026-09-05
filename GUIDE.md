@@ -11,7 +11,7 @@ numerics live in [PHYSICS.md](PHYSICS.md). Runnable copy of the worked example:
 import numpy as np, htdse as ht
 from htdse.submodules.spin import sigma_x
 
-H = ht.term(0.5 * sigma_x, on="q")                  # a Model
+H = ht.term(0.5 * sigma_x, on="q")                  # a System
 ev = ht.HamiltonianEvolution(H, ht.ket("0"))        # nothing solved yet
 psi = ev.state_at(np.linspace(0, np.pi, 50))        # (50, 2) numpy array
 ```
@@ -57,7 +57,7 @@ H = (ht.term(0.5 * w0 * sigma_z, on="spin", name="atom")
 
 Terms tagged `"mode"` land on the same factor; identity-padding is automatic; no matrix
 exists until an evolution asks. `coeff` is a number or `f(t)`; `name=` is the swap handle
-(`H.replace(atom=other)`); `ht.plus_hc(X)` = `X + X.dag()`, and `ht.hc(X)` = `X.dag()` alone,
+(`ht.replace(H, atom=other)`); `ht.plus_hc(X)` = `X + X.dag()`, and `ht.hc(X)` = `X.dag()` alone,
 as a free function next to `plus_hc` rather than a method you have to already know about.
 `ht.jump(L, on=..., coeff=np.sqrt(gamma), name=...)` is a Lindblad channel — composes the
 same way, lives in `.jumps` instead of `.groups` (see Recipes below).
@@ -88,7 +88,7 @@ H_jc = driven_spins([Tone(offset=-nu)], ["q0"], [mode1], lamb_dicke=1, rwa=True)
 
 | you want | `lamb_dicke=` | `rwa=` |
 |---|---|---|
-| exact, no expansion (returns a `System`, not a `Model`) | `None` | `False` |
+| exact, no expansion (returns a `System`) | `None` | `False` |
 | keep η¹ (spin-motion coupling) | `1` | `False` |
 | keep η¹+η² (Stark-shift-like term, plus cross-mode coupling if >1 mode) | `2` | `False` |
 | resonant term only (JC / anti-JC / MS force) | `1` | `True` |
@@ -124,7 +124,7 @@ worth it only when you need a genuine chirp.
 **Physics that isn't a sum of terms — write a `System`:**
 
 ```python
-class GaussianPulse(ht.System):
+class GaussianPulse:
     def __init__(self, Omega0, sigma):
         self.Omega0, self.sigma = Omega0, sigma
         self.subsystems = {"q": 2}          # opts into the truncation guard
@@ -133,8 +133,8 @@ class GaussianPulse(ht.System):
         ...                                 # hamiltonian(t) to skip the ODE solve
 ```
 
-Inheriting `ht.System` is optional (it's a `Protocol`) — it buys `H()`, `__repr__`,
-and clear errors instead of `AttributeError`. See "Your own system" under Recipes for the
+Non-term providers implement only the dynamics methods they need; `System` is the concrete value,
+and see "Your own system" under Recipes for the
 full pattern, including dissipation and the exact-propagation hints.
 
 ## Step 2 — build the realized model
@@ -150,7 +150,7 @@ tones_real = ms_tones(nu, delta * (1 + eps), Omega, theta=[0.0, 0.0])
 H_real = driven_spins(tones_real, ["q0", "q1"], [mode], lamb_dicke=1, rwa=True)
 ```
 
-Realized models are ordinary `Model`s, so error injection is composition — see
+Realized systems are ordinary `System`s, so error injection is composition — see
 "Compose or inject an error" under Recipes.
 
 ## Step 3 — evolve
@@ -206,7 +206,7 @@ rho_A  = ht.partial_trace(rho, {"A": 2, "B": 2}, ("B",))     # trace out B, stan
 ```
 
 The registry rides along from the term layer — you never pass a dims dict for a
-term-built model. `dims` is any `{name: dim}` registry — a `Model`'s `.subsystems`, or
+term-built system. `dims` is any `{name: dim}` registry — a `System`'s `.subsystems`, or
 an evolution's own.
 
 ## Step 5 — compare
@@ -296,10 +296,10 @@ mech = TrotterizedSystem(H_real, 0, T, n_steps=64)
 **Compose or inject an error** — groups are the handles:
 
 ```python
-realized = model.replace(drive=noisy_drive)     # swap one named group, keep the rest (unknown name raises)
+realized = ht.replace(system, drive=noisy_drive)     # swap one named group, keep the rest (unknown name raises)
 H_err    = H + pauli_term("Z0", coeff=0.02)     # add a static error term
-bare     = model.without("carrier_q0")          # drop a group
-one      = model.group("jc")                    # extract a group
+bare     = ht.without(system, "carrier_q0")          # drop a group
+one      = ht.group(system, "jc")                    # extract a group
 ```
 
 **Large Hilbert spaces** — flip to sparse; everything downstream follows (sparse matvecs,
@@ -311,7 +311,7 @@ ev = ht.HamiltonianEvolution(H_big.sparse(), psi0)
 
 `spin_boson.driven_spins(..., sparse=True)` and `molmer_sorensen.ms_closed_form(...,
 sparse=True)` do the same for the exact (`lamb_dicke=None`) and closed-form rungs, which
-have no `Model` underneath to call `.sparse()` on afterward. Kets scale; density matrices
+have no term-built `System` underneath to call `.sparse()` on afterward. Kets scale; density matrices
 and propagators are d×d regardless, so for the biggest spaces stay with
 `HamiltonianEvolution`.
 
@@ -430,7 +430,7 @@ htdse's registry is *ordered*, qutip's `dims` is *positional*, and they must agr
 - A dissipative system (`jump_operators`) handed to a closed-system evolution — refused.
 - `state_at` before `t0`, or across a declared discontinuity — refused.
 - Fock population reaching the top of a truncated ladder — `TruncationWarning`, not silence.
-- A dense `Model` past dim ~200 — one-time `SparseSuggestion`, not an automatic switch.
+- A dense `System` past dim ~200 — one-time `SparseSuggestion`, not an automatic switch.
 
 Full list and *why*: [README.md#guards](README.md#guards).
 

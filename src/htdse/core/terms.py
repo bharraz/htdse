@@ -1,6 +1,6 @@
-"""The composable Model layer.
+"""The composable System layer.
 
-A `Model` here is NOT a matrix -- it is a sum of symbolic *terms*, each
+A `System` here is NOT a matrix -- it is a sum of symbolic *terms*, each
 term being
 
     coefficient (a number, or a callable f(t))  x  local operators on NAMED
@@ -8,7 +8,7 @@ term being
 
 plus a registry {subsystem name: dimension}. The dense matrix on the joint
 space is a *materialization* computed only when an evolution asks for
-`.hamiltonian(t)` -- which makes a `Model` a drop-in `System`.
+`.hamiltonian(t)` -- which makes a `System` directly consumable by evolution.
 
 Because terms carry subsystem *names*, composition is literal:
 
@@ -25,9 +25,9 @@ The spin term stays 2-dim in its definition, the mode term stays
 Named groups are the swap-out handle:
 
     model    = atom + mode + term(..., name="drive")
-    realized = model.replace(drive=noisy_drive)   # same model, one entry swapped
+    realized = replace(system, drive=noisy_drive)   # same system, one entry swapped
 
-Storage is a backend detail, not a type: `H.sparse()` returns the same Model
+Storage is a backend detail, not a type: `H.sparse()` returns the same System
 flagged to materialize as scipy CSR, and the evolution classes then use sparse
 matrix-vector products automatically. You never handle a CSR yourself --
 `hamiltonian(t)` and `jump_operators(t)` always hand back plain numpy arrays;
@@ -35,7 +35,7 @@ only the solver sees the native storage. The flag is sticky under composition.
 
 Worth it from a joint dimension of a few hundred up (measured crossover ~200;
 5x faster at 256, 124x at 1024). Below that, dense wins on fixed overhead.
-Nothing switches by itself -- a Model past the threshold raises a one-time
+Nothing switches by itself -- a System past the threshold raises a one-time
 `SparseSuggestion` warning and leaves the decision to you.
 
 Physics caveats the framework cannot check for you:
@@ -53,7 +53,6 @@ from typing import Callable, Union
 import numpy as np
 from scipy import sparse as _sp
 
-from .system import System
 from .subsystems import embed
 
 _anon_counter = itertools.count()  # unique keys for unnamed term groups
@@ -76,7 +75,7 @@ SPARSE_HINT_MAX_FILL = 0.5
 
 
 class SparseSuggestion(UserWarning):
-    """Raised once by a dense Model large enough that `.sparse()` would pay.
+    """Raised once by a dense System large enough that `.sparse()` would pay.
     Performance advice, never a correctness problem -- silence with
     `warnings.simplefilter("ignore", SparseSuggestion)`."""
 
@@ -106,7 +105,7 @@ class _Term:
     `frame`: an optional free-text tag (e.g. "lab", "rotating@w0"), carrying no
     physics itself -- `+` is literal matrix addition, so it can't detect two
     terms written under different frame assumptions being combined into
-    something meaningless. Mixing distinct tags in one Model warns at
+    something meaningless. Mixing distinct tags in one System warns at
     materialization; this is the only thing `frame` does.
     """
 
@@ -186,13 +185,12 @@ def _merge_registry(a: dict, b: dict) -> dict:
     return out
 
 
-class Model(System):
+class System:
     """A sum of named groups of terms + a subsystem registry. Satisfies the
-    `System` protocol (`hamiltonian(t)`, `jump_operators(t)`), so it plugs
-    straight into any evolution class.
+    dynamics value consumed by the evolution classes.
 
     Treat instances as immutable: every operation (+, *, dag, replace, ...)
-    returns a new Model. See the module docstring for the full model.
+    returns a new System. See the module docstring for the full system.
     """
 
     def __init__(self, subsystems: dict | None = None, groups: dict | None = None,
@@ -205,12 +203,16 @@ class Model(System):
         self._cache_key = None  # structure _cache was built from
         self._hinted = False    # the .sparse() suggestion fires at most once
 
+    def H(self, t):
+        """Paper-style alias for the Hamiltonian accessor."""
+        return self.hamiltonian(t)
+
     # ---- composition ----------------------------------------------------
 
     def __add__(self, other):
         if isinstance(other, (int, float)) and other == 0:
             return self  # so sum([...]) works
-        if not isinstance(other, Model):
+        if not isinstance(other, System):
             return NotImplemented
         subsystems = _merge_registry(self.subsystems, other.subsystems)
         groups = {k: list(v) for k, v in self.groups.items()}
@@ -222,12 +224,12 @@ class Model(System):
             jumps.setdefault(k, [])
             jumps[k] = jumps[k] + list(terms)
         # sparse is sticky under composition: either side sparse => sum sparse
-        return Model(subsystems, groups, jumps, sparse=self.is_sparse or other.is_sparse)
+        return System(subsystems, groups, jumps, sparse=self.is_sparse or other.is_sparse)
 
     __radd__ = __add__
 
-    def sparse(self, flag: bool = True) -> "Model":
-        """Return this Model flagged to materialize as scipy sparse (CSR).
+    def sparse(self, flag: bool = True) -> "System":
+        """Return this System flagged to materialize as scipy sparse (CSR).
 
         Same physics, different storage: every embedded term matrix and the
         static sum become CSR, and the evolution classes use sparse
@@ -240,13 +242,13 @@ class Model(System):
         crossover is ~200 (dense H(t) recopies all dim^2 entries per call
         regardless of how empty it is, while sparse tracks nnz), giving 5x at
         dim 256 and 124x at 1024. Below ~200, dense wins on fixed overhead.
-        A dense Model past the threshold says so once; it never switches
+        A dense System past the threshold says so once; it never switches
         itself.
 
         The flag is sticky under composition: `H.sparse() + other` is sparse.
         `H.sparse(False)` (or on any composition of sparse models) toggles back
         to dense."""
-        return Model(self.subsystems, self.groups, self.jumps, sparse=flag)
+        return System(self.subsystems, self.groups, self.jumps, sparse=flag)
 
     def _reject_jumps(self, op: str):
         """Scaling/negating/subtracting a DISSIPATIVE model has no agreed
@@ -257,7 +259,7 @@ class Model(System):
         pick a convention, refuse. Strip the channels explicitly first."""
         if self.jumps:
             raise ValueError(
-                f"cannot {op} a Model carrying jump operators "
+                f"cannot {op} a System carrying jump operators "
                 f"{sorted(self.jumps)}: dissipation does not scale with the "
                 f"coherent part, and negation/subtraction would merge the "
                 f"channels in unscaled. Drop them first with "
@@ -265,10 +267,10 @@ class Model(System):
 
     def __mul__(self, c: Coefficient):
         """Scale every HAMILTONIAN term's coefficient by a scalar or f(t).
-        Refuses a Model carrying jump operators (see `_reject_jumps`)."""
+        Refuses a System carrying jump operators (see `_reject_jumps`)."""
         self._reject_jumps("scale")
         groups = {k: [term.scaled(c) for term in v] for k, v in self.groups.items()}
-        return Model(self.subsystems, groups, self.jumps, sparse=self.is_sparse)
+        return System(self.subsystems, groups, self.jumps, sparse=self.is_sparse)
 
     __rmul__ = __mul__
 
@@ -277,13 +279,13 @@ class Model(System):
         return self * (-1.0)
 
     def __sub__(self, other):
-        if not isinstance(other, Model):
+        if not isinstance(other, System):
             return NotImplemented
         self._reject_jumps("subtract from")
         other._reject_jumps("subtract")
         return self + (other * (-1.0))
 
-    def dag(self) -> "Model":
+    def dag(self) -> "System":
         """Hermitian conjugate of every Hamiltonian term: (A x B)^dag with the
         coefficient conjugated, groups keeping their names. This is the `h.c.`
         of a paper Hamiltonian -- `H_int + H_int.dag()` completes a coupling
@@ -293,14 +295,14 @@ class Model(System):
         physically different channel, and carrying jumps through `h + h.dag()`
         would silently double every dissipation rate."""
         groups = {k: [term.dag() for term in v] for k, v in self.groups.items()}
-        return Model(self.subsystems, groups, sparse=self.is_sparse)
+        return System(self.subsystems, groups, sparse=self.is_sparse)
 
-    def replace(self, **named) -> "Model":
+    def replace(self, **named) -> "System":
         """Swap out named term groups wholesale: the composable-error workflow.
 
-            realized = model.replace(drive=noisy_drive)
+            realized = replace(system, drive=noisy_drive)
 
-        Each value is a Model; ALL its terms (and jumps, and any new
+        Each value is a System; ALL its terms (and jumps, and any new
         subsystems it introduces) land under the replaced name. The group must
         already exist -- replacing an unknown name is almost always a typo, so
         it raises. To add a group, use `+`; to delete one, use `without()`."""
@@ -311,8 +313,8 @@ class Model(System):
             if name not in groups and name not in jumps:
                 raise KeyError(f"no term group named {name!r}; have "
                                f"{sorted(set(groups) | set(jumps))}")
-            if not isinstance(replacement, Model):
-                raise TypeError(f"replacement for {name!r} must be a Model")
+            if not isinstance(replacement, System):
+                raise TypeError(f"replacement for {name!r} must be a System")
             subsystems = _merge_registry(subsystems, replacement.subsystems)
             groups[name] = [t for terms in replacement.groups.values() for t in terms]
             if not groups[name]:
@@ -322,20 +324,20 @@ class Model(System):
                 jumps[name] = new_jumps
             elif name in jumps:
                 del jumps[name]
-        return Model(subsystems, groups, jumps, sparse=self.is_sparse)
+        return System(subsystems, groups, jumps, sparse=self.is_sparse)
 
-    def without(self, *names) -> "Model":
+    def without(self, *names) -> "System":
         """Drop named term groups (from both H terms and jumps)."""
         for name in names:
             if name not in self.groups and name not in self.jumps:
                 raise KeyError(f"no term group named {name!r}")
         groups = {k: v for k, v in self.groups.items() if k not in names}
         jumps = {k: v for k, v in self.jumps.items() if k not in names}
-        return Model(self.subsystems, groups, jumps, sparse=self.is_sparse)
+        return System(self.subsystems, groups, jumps, sparse=self.is_sparse)
 
-    def group(self, name) -> "Model":
-        """Extract one named group as its own Model (same registry)."""
-        out = Model(self.subsystems, sparse=self.is_sparse)
+    def group(self, name) -> "System":
+        """Extract one named group as its own System (same registry)."""
+        out = System(self.subsystems, sparse=self.is_sparse)
         if name in self.groups:
             out.groups[name] = list(self.groups[name])
         if name in self.jumps:
@@ -355,7 +357,7 @@ class Model(System):
 
     def _embed(self, term: _Term):
         """Embed one term into the joint space: dense ndarray, or CSR when
-        this Model is flagged sparse (embed() stays sparse throughout)."""
+        this System is flagged sparse (embed() stays sparse throughout)."""
         if self.is_sparse:
             return embed(term.local_matrix(sparse=True), self.subsystems,
                          term.involved())
@@ -369,7 +371,7 @@ class Model(System):
 
         Identity-level, not value-level: this catches terms added, removed, or
         swapped, but NOT a _Term mutated in place (`t.coeff = ...`), which keeps
-        its id. Rebuild the Model rather than edit a _Term."""
+        its id. Rebuild the System rather than edit a _Term."""
         return (tuple((k, tuple(id(t) for t in v)) for k, v in self.groups.items()),
                 tuple((k, tuple(id(t) for t in v)) for k, v in self.jumps.items()),
                 tuple(self.subsystems.items()),
@@ -385,7 +387,7 @@ class Model(System):
                   for t in terms if t.frame is not None}
         if len(frames) > 1:
             warnings.warn(f"composing terms tagged with different frames {sorted(frames)} "
-                          "-- literal addition of Models written in different "
+                          "-- literal addition of Systems written in different "
                           "frames is not physically meaningful", stacklevel=3)
         if self.is_sparse:
             static = _sp.csr_matrix((self.dim, self.dim), dtype=complex)
@@ -414,11 +416,11 @@ class Model(System):
         return self._cache
 
     def _suggest_sparse(self, static, dynamic):
-        """Warn once if this dense Model is big enough that `.sparse()` would
+        """Warn once if this dense System is big enough that `.sparse()` would
         pay. Advice only -- nothing switches by itself.
 
         A warning rather than a print so it carries a source line (pointing at
-        the code that built the Model) and obeys the usual warning filters.
+        the code that built the System) and obeys the usual warning filters.
         `quiet()` does NOT silence it: it is about your model, not solver
         chatter. Use `warnings.simplefilter("ignore", SparseSuggestion)`."""
         if self.is_sparse or self._hinted or self.dim < SPARSE_HINT_DIM:
@@ -434,14 +436,14 @@ class Model(System):
         if fill > SPARSE_HINT_MAX_FILL:
             return
         warnings.warn(
-            f"this Model is {self.dim}-dim and {100 * fill:.1f}% filled -- "
+            f"this System is {self.dim}-dim and {100 * fill:.1f}% filled -- "
             f".sparse() would cut H(t) rebuild time substantially (dense "
             f"recopies all {self.dim * self.dim:,} entries per call). Storage "
             f"stays internal either way; hamiltonian(t) returns a plain array.",
             SparseSuggestion, stacklevel=4)
 
     def _h_native(self, t):
-        """H(t) in this Model's native storage -- CSR when sparse-flagged.
+        """H(t) in this System's native storage -- CSR when sparse-flagged.
 
         The SOLVER's accessor. Sparse storage is a backend decision: keeping it
         sparse here is the whole point of the flag, and the evolution classes
@@ -495,7 +497,7 @@ class Model(System):
             parts.append(f"jumps=({js})")
         if self.is_sparse:
             parts.append("sparse")
-        return f"Model({', '.join(parts)})"
+        return f"System({', '.join(parts)})"
 
 
 def _build_ops_and_dims(op, on, dims):
@@ -524,8 +526,8 @@ def _build_ops_and_dims(op, on, dims):
 
 
 def term(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
-         frame: str | None = None, dims: dict | None = None) -> Model:
-    """Build a one-term Model -- the atom everything composes from.
+         frame: str | None = None, dims: dict | None = None) -> System:
+    """Build a one-term System -- the atom everything composes from.
 
     op:    a matrix (with `on=` naming its subsystem), or a dict
            {name: matrix} for a product across several subsystems
@@ -535,17 +537,17 @@ def term(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     name:  the term-group name -- the handle `replace()` swaps by. Unnamed
            terms get a unique auto-name (composable, but not swappable).
     frame: optional tag ("lab", "rotating@w0", ...); mixing distinct tags in
-           one Model warns at materialization.
+           one System warns at materialization.
     """
     ops, term_dims = _build_ops_and_dims(op, on, dims)
     key = name if name is not None else f"term{next(_anon_counter)}"
     t = _Term(coeff, ops, term_dims, frame)
-    return Model(term_dims, groups={key: [t]})
+    return System(term_dims, groups={key: [t]})
 
 
 def jump(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
-         dims: dict | None = None) -> Model:
-    """Build a Model carrying one Lindblad jump operator (and no
+         dims: dict | None = None) -> System:
+    """Build a System carrying one Lindblad jump operator (and no
     coherent term). The materialized L is coeff * (embedded op) -- keep the
     sqrt(rate) convention: pass coeff=np.sqrt(gamma).
 
@@ -554,10 +556,10 @@ def jump(op, on=None, coeff: Coefficient = 1.0, name: str | None = None,
     ops, term_dims = _build_ops_and_dims(op, on, dims)
     key = name if name is not None else f"jump{next(_anon_counter)}"
     t = _Term(coeff, ops, term_dims, None)
-    return Model(term_dims, jumps={key: [t]})
+    return System(term_dims, jumps={key: [t]})
 
 
-def plus_hc(h: Model) -> Model:
+def plus_hc(h: System) -> System:
     """h + h.dag() -- the ubiquitous `X + h.c.` pattern in one call.
 
     Any jump operators on `h` ride through exactly once (see `dag`): only the
@@ -565,8 +567,23 @@ def plus_hc(h: Model) -> Model:
     return h + h.dag()
 
 
-def hc(h: Model) -> Model:
+def hc(h: System) -> System:
     """JUST the Hermitian conjugate -- `h.dag()` as a free function, so it
     sits next to `plus_hc` instead of being the one operation on this page
     you have to reach for a method to get. `h + hc(h)` == `plus_hc(h)`."""
     return h.dag()
+
+
+def replace(system: System, **named) -> System:
+    """Return ``system`` with named contribution groups replaced."""
+    return system.replace(**named)
+
+
+def without(system: System, *names) -> System:
+    """Return ``system`` without the named contribution groups."""
+    return system.without(*names)
+
+
+def group(system: System, name) -> System:
+    """Return one named contribution group as a new System."""
+    return system.group(name)

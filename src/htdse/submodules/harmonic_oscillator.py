@@ -4,7 +4,6 @@ dephased motional mode (e.g. trapped-ion motional heating/dephasing).
 """
 import numpy as np
 
-from ..core.system import System
 
 
 def annihilation(n_max: int) -> np.ndarray:
@@ -78,7 +77,7 @@ def thermal(nbar: float, n_max: int) -> np.ndarray:
     return np.diag(p).astype(complex)
 
 
-class ThermalMotionalDecoherence(System):
+class ThermalMotionalDecoherence:
     """Damped + dephased quantum harmonic oscillator coupled to a thermal
     reservoir (e.g. trapped-ion motional-mode heating and dephasing):
 

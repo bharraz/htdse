@@ -25,17 +25,18 @@ def _dense(H) -> np.ndarray:
 def _h_of(system):
     """The solver's H(t) accessor.
 
-    A Model's PUBLIC `hamiltonian(t)` always densifies, because a user asking
+    A System's PUBLIC `hamiltonian(t)` always densifies, because a user asking
     to see the matrix wants one they can plot and index. The solver wants the
     native storage -- keeping a sparse model sparse is the entire point -- so
     it prefers `_h_native` when the system offers one. A hand-written system
     has no `_h_native`, and whatever it returns (dense or CSR) is handled."""
-    return getattr(system, "_h_native", system.hamiltonian)
+    return getattr(system, "_h_native", getattr(system, "hamiltonian"))
 
 
 def _jumps_of(system):
     """The solver's jump-operator accessor. See `_h_of`."""
-    return getattr(system, "_jumps_native", system.jump_operators)
+    return getattr(system, "_jumps_native", getattr(system, "jump_operators",
+                                                     lambda t: []))
 
 
 def _check_hermitian(H, what="H(t0)"):
@@ -82,7 +83,7 @@ def _is_dissipative(system, t0) -> bool:
     """Whether `system` carries jump operators at (or structurally, regardless
     of) `t0`. Sampling `jump_operators(t0)` alone would miss a channel that
     switches on at t > t0 (a time-dependent coefficient vanishing at t0). A
-    term-layer Model declares its channels structurally, so check that
+    term-built System declares its channels structurally, so check that
     registry when it exists; for a hand-written System, sampling at t0 is
     all we have."""
     structural = getattr(system, "jumps", None)
@@ -345,7 +346,7 @@ def _schrodinger_rhs(system, shape):
 
 def _default_subsystems(system, subsystems):
     """Explicit `subsystems=` wins; otherwise a system that knows its own
-    tensor structure (e.g. a term-layer Model) supplies it."""
+              tensor structure (e.g. a term-built System) supplies it."""
     if subsystems is not None:
         return dict(subsystems)
     return dict(getattr(system, "subsystems", {}) or {})
@@ -454,7 +455,7 @@ class HamiltonianEvolution(_Reportable):
     `subsystems`: ordered {name: dim} of this state's tensor factors, needed
     by `trace_out`. Order must match how `initial` was built (e.g. via
     `otimes`). Defaults to the system's own `.subsystems` when it has one
-    (term-layer Models always do).
+    (term-built Systems always do).
 
     Every time-parametrized method accepts a scalar t or an array of times.
     """
