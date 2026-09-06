@@ -211,7 +211,7 @@ exported by `from htdse import *` for interactive calculations.
 | **Basis state** | $\lvert k\rangle$<br>`psi = ht.ket("1")` | $\lvert k\rangle\langle k\rvert$<br>`rho = ht.projector(ht.ket("1"))` |
 | **General state** | $\lvert\psi\rangle=\sum_i c_i\lvert i\rangle$<br>`psi = c0*ht.ket("0") + c1*ht.ket("1")` | $\rho=\sum_i p_i\lvert\psi_i\rangle\langle\psi_i\rvert$<br>`rho = p0*ht.projector(psi0) + p1*ht.projector(psi1)` |
 | **Coefficient or element** | $c_0=\langle0\vert\psi\rangle$<br>`c0 = ht.element(psi, "0")` | $\rho_{01}=\langle0\vert\rho\vert1\rangle$<br>`rho01 = ht.element(rho, "0", "1")`<br>For a pure state, $\rho_{01}=c_0c_1^*$. |
-| **Local element** | $\langle0\vert\rho_s\vert1\rangle$, where $\rho_s=\operatorname{Tr}_m\lvert\psi\rangle\langle\psi\rvert$<br>`z = ht.element(psi, "0", "1", on="spin", subsystems=subsystems)` | $\langle0\vert\rho_s\vert1\rangle$<br>`z = ht.element(rho, "0", "1", on="spin", subsystems=subsystems)` |
+| **Local element** | $\langle0\vert\rho_s\vert1\rangle$, where $\rho_s=\text{Tr}_m\lvert\psi\rangle\langle\psi\rvert$<br>`z = ht.element(psi, "0", "1", on="spin", subsystems=subsystems)` | $\langle0\vert\rho_s\vert1\rangle$<br>`z = ht.element(rho, "0", "1", on="spin", subsystems=subsystems)` |
 | **Basis-state population** | $\lvert c_k\rvert^2$<br>`p = ht.population("1", psi)` | $\rho_{kk}$<br>`p = ht.population("1", rho)` |
 | **Arbitrary-state population** | $\lvert\langle\phi\vert\psi\rangle\rvert^2$<br>`p = ht.population(phi, psi)` | $\langle\phi\vert\rho\vert\phi\rangle$<br>`p = ht.population(phi, rho)` |
 
@@ -238,18 +238,18 @@ transformation; `change_basis` is a passive change of coordinates.
 
 | Operation | Pure state $\lvert\psi\rangle$ | Density matrix $\rho$ |
 | :--- | :--- | :--- |
-| **Expectation value** | $\langle A\rangle=\langle\psi\vert A\vert\psi\rangle$<br>`mean = ht.expect(A, psi)` | $\langle A\rangle=\operatorname{Tr}(A\rho)$<br>`mean = ht.Tr(A @ rho)`<br>or `ht.expect(A, rho)` |
+| **Expectation value** | $\langle A\rangle=\langle\psi\vert A\vert\psi\rangle$<br>`mean = ht.expect(A, psi)` | $\langle A\rangle=\text{Tr}(A\rho)$<br>`mean = ht.Tr(A @ rho)`<br>or `ht.expect(A, rho)` |
 | **Embed locally** | $A_s=A\otimes I_m$<br>`A_spin = ht.embed(A, on="spin", subsystems=subsystems)` | The same embedded operator acts on $\rho$. |
 | **Tensor product** | $\lvert\psi_A\rangle\otimes\lvert\psi_B\rangle$<br>`psi = ht.otimes(psi_A, psi_B)` | $\rho_A\otimes\rho_B$<br>`rho = ht.otimes(rho_A, rho_B)` |
-| **Discard a subsystem** | $\rho_A=\operatorname{Tr}_B\lvert\psi\rangle\langle\psi\rvert$<br>`rho_A = ht.partial_trace(psi, subsystems, "B")` | $\rho_A=\operatorname{Tr}_B(\rho)$<br>`rho_A = ht.partial_trace(rho, subsystems, "B")` |
+| **Discard a subsystem** | $\rho_A=\text{Tr}_B\lvert\psi\rangle\langle\psi\rvert$<br>`rho_A = ht.partial_trace(psi, subsystems, "B")` | $\rho_A=\text{Tr}_B(\rho)$<br>`rho_A = ht.partial_trace(rho, subsystems, "B")` |
 
 #### Measurement
 
 | Operation | Pure state $\lvert\psi\rangle$ | Density matrix $\rho$ |
 | :--- | :--- | :--- |
-| **Projective outcome** | $p=\langle\psi\vert P\vert\psi\rangle$, $\lvert\psi'\rangle=P\lvert\psi\rangle/\sqrt p$<br>`post, p = ht.measure(P, psi)` | $p=\operatorname{Tr}(P\rho)$, $\rho'=P\rho P/p$<br>`post, p = ht.measure(P, rho)` |
-| **POVM probabilities** | $p_k=\langle\psi\vert E_k\vert\psi\rangle$<br>`ps = [ht.expect(E, psi) for E in effects]` | $p_k=\operatorname{Tr}(E_k\rho)$<br>`ps = [ht.Tr(E @ rho) for E in effects]` |
-| **General outcome** | $p_k=\lVert M_k\lvert\psi\rangle\rVert^2$<br>`post, p = ht.measure(M_k, psi)` | $p_k=\operatorname{Tr}(M_k^\dagger M_k\rho)$<br>`post, p = ht.measure(M_k, rho)` |
+| **Projective outcome** | $p=\langle\psi\vert P\vert\psi\rangle$, $\lvert\psi'\rangle=P\lvert\psi\rangle/\sqrt p$<br>`post, p = ht.measure(P, psi)` | $p=\text{Tr}(P\rho)$, $\rho'=P\rho P/p$<br>`post, p = ht.measure(P, rho)` |
+| **POVM probabilities** | $p_k=\langle\psi\vert E_k\vert\psi\rangle$<br>`ps = [ht.expect(E, psi) for E in effects]` | $p_k=\text{Tr}(E_k\rho)$<br>`ps = [ht.Tr(E @ rho) for E in effects]` |
+| **General outcome** | $p_k=\lVert M_k\lvert\psi\rangle\rVert^2$<br>`post, p = ht.measure(M_k, psi)` | $p_k=\text{Tr}(M_k^\dagger M_k\rho)$<br>`post, p = ht.measure(M_k, rho)` |
 
 Add `on=` and `subsystems=` to `measure` for a local outcome. POVM effects
 $E_k$ determine probabilities but not a unique post-measurement state; supply
@@ -260,8 +260,8 @@ an outcome.
 
 | Operation | Pure state $\lvert\psi\rangle$ | Density matrix $\rho$ |
 | :--- | :--- | :--- |
-| **Overlap** | $\langle\phi\vert\psi\rangle$<br>`z = ht.overlap(phi, psi)` | $\operatorname{Tr}(\sigma\rho)$<br>`z = ht.Tr(sigma @ rho)` |
-| **Fidelity** | $F=\lvert\langle\phi\vert\psi\rangle\rvert^2$<br>`F = ht.fidelity(phi, psi)` | $F=(\operatorname{Tr}\sqrt{\sqrt\sigma\rho\sqrt\sigma})^2$<br>`F = ht.fidelity(sigma, rho)` |
+| **Overlap** | $\langle\phi\vert\psi\rangle$<br>`z = ht.overlap(phi, psi)` | $\text{Tr}(\sigma\rho)$<br>`z = ht.Tr(sigma @ rho)` |
+| **Fidelity** | $F=\lvert\langle\phi\vert\psi\rangle\rvert^2$<br>`F = ht.fidelity(phi, psi)` | $F=(\text{Tr}\sqrt{\sqrt\sigma\rho\sqrt\sigma})^2$<br>`F = ht.fidelity(sigma, rho)` |
 | **Distance** | $\sqrt{1-F}$<br>`d = ht.distance(phi, psi)` | $\frac12\lVert\sigma-\rho\rVert_1$<br>`d = ht.distance(sigma, rho)` |
 | **Relative phase of states** | $\arg\langle\phi\vert\psi\rangle$<br>`phase = ht.relative_phase(phi, psi)` | Global phase is not present in a density matrix. |
 | **Relative phase of components** | $\arg(c_jc_k^*)$<br>`phase = np.angle(c_j * c_k.conj())` | $\arg(\rho_{jk})$<br>`phase = np.angle(rho[j, k])` |
