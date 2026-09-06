@@ -3,10 +3,9 @@
 `TrotterizedSystem` turns ANY system's H(t) into its piecewise-constant
 version: H is sampled once per step and held. Because it declares its step
 edges as `breakpoints()` and sets `piecewise_constant = True`, the evolution
-layer (a) never lets the adaptive ODE stepper integrate across a step edge,
-and (b) propagates each step EXACTLY via the eigendecomposition of the held H
-(U_step = V e^{-iE dt} V^dag) -- so Trotter evolution is both faster and free
-of smooth-interpolant artifacts, while remaining just another `H(t)`.
+layer (a) never lets an adaptive step cross a step edge and (b) asks QuTiP's
+diagonal integrator to propagate each held Hamiltonian exactly. Trotterized
+dynamics therefore remain just another private provider of `H(t)`.
 """
 import numpy as np
 

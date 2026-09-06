@@ -28,8 +28,8 @@ Named groups are the swap-out handle:
     realized = replace(system, drive=noisy_drive)   # same system, one entry swapped
 
 Storage is a backend detail, not a type: `H.sparse()` returns the same System
-flagged to materialize as scipy CSR, and the evolution classes then use sparse
-matrix-vector products automatically. You never handle a CSR yourself --
+flagged to materialize as scipy CSR, which QuTiP preserves internally. You
+never handle a CSR yourself --
 `hamiltonian(t)` and `jump_operators(t)` always hand back plain numpy arrays;
 only the solver sees the native storage. The flag is sticky under composition.
 
@@ -302,8 +302,7 @@ class System:
 
         Same physics, different storage: every embedded term matrix and the
         static sum become CSR, and the evolution classes use sparse
-        matrix-vector products (and `expm_multiply` on the exact
-        piecewise-constant path). This does NOT change what you get back --
+        operators through QuTiP. This does NOT change what you get back --
         `hamiltonian(t)` and `jump_operators(t)` still return plain numpy
         arrays either way; the CSR stays on the solver side.
 

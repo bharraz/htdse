@@ -156,7 +156,7 @@ def ms_closed_form(spins, modes, delta, amplitudes=1.0, phases=0.0,
     `DensityMatrixEvolution` consume it directly with no ODE solve.
 
     Built as a factory FUNCTION (same convention as
-    `interop.qutip.as_system`), not a class the caller instantiates: the
+    other physics factory functions), not a class the caller instantiates: the
     physics is not object-oriented, so nothing here is.
 
     spins: ion subsystem names, e.g. ["q0", "q1"] -- same convention as

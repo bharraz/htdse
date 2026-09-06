@@ -188,8 +188,8 @@ trust the setup.
   `HamiltonianEvolution`/`DensityMatrixEvolution`/`LindbladEvolution`, batched over `t`.
 - **`.unitarity_defect(t)`** on `UnitaryEvolution`/`DensityMatrixEvolution` —
   $\max|U^\dagger U - \mathbb 1|$, the accuracy diagnostic for anything built on $U$.
-- **Exact instead of ODE**: a system with `piecewise_constant = True` and `breakpoints()`
-  gets propagated by eigendecomposition per interval — faster and error-free (see
+- **Exact instead of ODE**: an internal provider with `piecewise_constant = True`
+  and `breakpoints()` is propagated by QuTiP's diagonal method per interval (see
   "Trotterize anything" below).
 - **A gate with no `hamiltonian(t)`** (only `.unitary(t)`, e.g. `ms_closed_form`) —
   `UnitaryEvolution`/`DensityMatrixEvolution` consume it directly, no ODE, no matrix log.
@@ -302,8 +302,8 @@ bare     = ht.without(system, "carrier_q0")          # drop a group
 one      = ht.group(system, "jc")                    # extract a group
 ```
 
-**Large Hilbert spaces** — flip to sparse; everything downstream follows (sparse matvecs,
-`expm_multiply` on the Trotter path). Worth it above dimension ~10³, necessary near 10⁴:
+**Large Hilbert spaces** — storage stays internal. A structurally sparse System above
+the measured threshold suggests the single optional override, which QuTiP preserves:
 
 ```python
 ev = ht.HamiltonianEvolution(H_big.sparse(), psi0)
@@ -315,12 +315,8 @@ have no term-built `System` underneath to call `.sparse()` on afterward. Kets sc
 and propagators are d×d regardless, so for the biggest spaces stay with
 `HamiltonianEvolution`.
 
-**Your own system** — see [README](README.md#extending-it) for the full pattern
-(dissipation via `jump_operators(t)`, the `breakpoints()`/`piecewise_constant` exact-propagation
-hints, sparse-matrix returns). Systems are frozen once handed to an evolution; mutating
-parameters afterwards raises.
-
-**Solver control** — `rtol=`, `atol=`, `method=` pass through to `scipy.solve_ivp`;
+**Solver control** — `rtol=`, `atol=`, and QuTiP methods such as `method="dop853"`
+(the default), `"vern7"`, `"vern9"`, `"bdf"`, or `"lsoda"` pass through;
 `verbose=False` per evolution or `ht.quiet()` globally; `check_mutation=False` skips the
 stale-physics guard in an optimizer's inner loop, and only there.
 
@@ -359,14 +355,14 @@ W = wigner(rho_mode, xs, xs)             # shape (len(xs), len(xs)); pcolormesh(
 
 ## Checking a run
 
-**`ev.report()`** — the solved range, how it was propagated, rhs evaluations, guard status,
+**`ev.report()`** — the solved range, backend runs, guard status,
 population at the top of each truncated ladder, unitarity defect, trace. Reads state
 already tracked, so it costs nothing and never triggers a solve.
 
 ```python
 print(ev.report())
 #   solved_range    [0, 57.1199]
-#   propagation     RK45, rtol=1e-08, atol=1e-10
+#   propagation     QuTiP dop853, rtol=1e-08, atol=1e-10
 #   mutation_guard  active
 #   truncation      mode=0.101        <- 10% at the ceiling: this run is compromised
 ```
@@ -407,19 +403,18 @@ and solved gates" above.
 
 ## Talking to QuTiP
 
-`htdse.interop.qutip` is a lazy bridge. qutip is not a dependency; nothing imports it until
-you call this.
+QuTiP is htdse's production evolution backend. Ordinary calls keep it hidden and return
+NumPy arrays. This escape hatch exposes the compiled objects for QuTiP capabilities
+outside htdse's intentionally small vocabulary.
 
 ```python
-from htdse.interop.qutip import to_qutip, to_qobj, as_system
+from htdse.interop.qutip import to_qutip, to_qobj
 
-H_q, c_ops = to_qutip(model)        # qutip's native [H0, [H1, f1]] form (its fast path)
-qutip.mcsolve(H_q, to_qobj(psi0, model.subsystems), ts, c_ops)
+H_q, c_ops = to_qutip(system)       # the same compiled objects evolve() uses
+qutip.mcsolve(H_q, to_qobj(psi0, system.subsystems), ts, c_ops)
 ```
 
-Compose here, solve there for what htdse does not implement: `mcsolve`, `steadystate`,
-`floquet`. The reverse works too — `as_system(qobj)` wraps a QuTiP object so htdse's
-evolutions and guards consume it, and qutip's measures take htdse output through `to_qobj`.
+Use this for what htdse does not implement: `mcsolve`, `steadystate`, or `floquet`.
 
 htdse's registry is *ordered*, qutip's `dims` is *positional*, and they must agree.
 `to_qobj` checks that dimensions multiply out; it cannot check the order.

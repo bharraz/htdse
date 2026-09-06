@@ -509,6 +509,13 @@ def run(chain: IonChain, seq: Sequence, initial, times, **kwargs):
                        else (LindbladEvolution if system.jumps else DensityMatrixEvolution))
     events = sorted(((item.at, i, item) for i, item in enumerate(seq.instructions)
                      if isinstance(item, _UnitaryEvent)), key=lambda x: (x[0], x[1]))
+    # Virtual-Z instructions are already compiled into the tone phases. With
+    # no state-changing instantaneous event, hand the complete requested grid
+    # to QuTiP in one call; solving one tiny interval per plotted point turns
+    # Python/Qobj setup into the dominant cost for the normal ion workflow.
+    if not any(event.kind != "rz" for _, _, event in events):
+        result = evolution_class(system, state, t0=0.0, **kwargs).state_at(times_arr)
+        return result[0] if np.ndim(times) == 0 else result
     current = 0.0
     out = []
     event_index = 0

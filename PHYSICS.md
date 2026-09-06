@@ -20,18 +20,15 @@ $$ i\,\frac{d}{dt}\lvert\psi(t)\rangle = H(t)\,\lvert\psi(t)\rangle $$
 array of times). Also on it: `trace_out(*names, t=...)` (reduced density matrix, batched
 over t), `instantaneous_eigenbasis(t)`, `adiabatic_populations(t)`, `adiabatic_fidelity(t)`.
 
-**Numerics.** The state is flattened to a complex vector and handed to an adaptive
-Runge–Kutta integrator (`scipy.solve_ivp`, RK45 default, `rtol=1e-8`, `atol=1e-10`,
-overridable). The right-hand side is literally `-1j * H(t) @ psi` — every RHS evaluation
-calls `system.hamiltonian(t)`, which is why the term layer caches its static part.
+**Numerics.** Named terms compile once to QuTiP's native constant-operator plus scalar-
+coefficient form. QuTiP's `dop853` integrator is the default (`rtol=1e-8`, `atol=1e-10`),
+and public results are converted back to NumPy arrays.
 
-Considerations baked into the solver (`core/evolution.py::_ExtendableSolver`):
+Considerations baked into the solver (`core/evolution.py::_QutipSolver`):
 
-- **Lazy + extend-only.** Nothing integrates until you ask. `state_at(5.0)` solves
-  `[t0, 5]`; a later `state_at(8.0)` *continues* from the stored boundary state at 5 —
-  same ODE, never re-solved, and **never extrapolated**: a time outside the solved range
-  always triggers a real continuation solve. Times inside the range are evaluated with the
-  integrator's own dense output (its internal interpolant, accurate to the solve tolerance).
+- **Lazy + cached.** Nothing integrates until you ask. Requested states are cached; a new
+  time outside the cache triggers a real solve from the initial condition, never an
+  extrapolation.
 - **Frozen systems.** Solved segments are memoized, so mutating a system's parameters
   after binding would silently continue from stale physics. The evolution snapshots the
   system's parameters at construction and raises if they change.
@@ -224,9 +221,8 @@ smoothly varying H (midpoint rule), i.e. global error $O(\Delta t^2)$.
 **Code.** `TrotterizedSystem(inner, t_start, t_stop, n_steps)` wraps *any* system into
 its piecewise-constant version. It declares the step edges as `breakpoints()` (solver never
 integrates across an edge) and `piecewise_constant = True` (each step propagated exactly via
-eigendecomposition, section 1; for a sparse model the dense eigendecomposition is replaced by
-`scipy.sparse.linalg.expm_multiply` — the *action* of $e^{-iH\Delta t}$ on the state, so the
-dense d×d exponential is never formed). So "Trotter error" studies compare *only* discretization
+QuTiP's diagonal integrator, section 1, while sparse storage remains inside QuTiP). So
+"Trotter error" studies compare *only* discretization
 physics, with zero ODE-stepping artifacts mixed in — the smooth `inner` evolution and the
 Trotterized one are both solved to machine-level accuracy of their respective models.
 
@@ -348,9 +344,8 @@ zero).
 quasiprobability $W(x,p)$ of a Fock-basis ket or reduced ρ — `trace_out` the spins first — with
 negativity of $W$ as the visible signature of nonclassicality.)
 
-`ms_closed_form` implements `.unitary(t)` only (it *is* a gate — section 2's dual primitive),
-built as a factory FUNCTION (same convention as `interop.qutip.as_system`) rather than a
-class the caller instantiates, and its integrals are dense-grid quadrature
+`ms_closed_form` implements `.unitary(t)` only (an analytic result — section 2's dual
+primitive), built by a factory function rather than a public subclass, and its integrals are dense-grid quadrature
 (`points_per_period`). Two honesty guards: constant phases required (time-dependent $\phi_j$
 breaks the commutator structure that terminated the series — use `driven_spins(...,
 rwa=True)` and an ODE solve for that), and remember the closed form is the

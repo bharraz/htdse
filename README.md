@@ -1,227 +1,199 @@
 # htdse
-WIP: add model section as 'most systems', Simulate a System framing, make extending systems only based on difference with model, understand guards and breakpoints
-NOTE: Written with significant help from AI (Claude). Built over many revisions, stemming from human design.
 
-A small, transparent time-dependent Schrödinger/Lindblad solver.
+`htdse` lets quantum-simulation code read like the physics while QuTiP handles
+the numerical evolution underneath. Public states and operators are ordinary
+NumPy arrays.
 
-- **Transparent.** No wrapper types. You hand it numpy arrays and get numpy arrays back
-  (scipy CSR if you asked for sparse). Every intermediate is inspectable, and every
-  approximation is a constructor argument rather than a hidden default.
-- **Lightweight.** numpy, scipy, matplotlib. 
-- **Extensible.** A `System` is anything with `hamiltonian(t)` (or `unitary(t)`).
+```python
+import numpy as np
+import htdse as ht
 
-It composes Hamiltonians from *named* pieces, so building a variant of a model (with an
-error term, a swapped drive, a different approximation) is a one-line edit rather than a
-rewrite. Comparing the variant to the original is what most of the package is for.
+H = (ht.term(0.5 * ht.sigma_z, on="spin", name="splitting")
+     + ht.term(0.2 * ht.sigma_x, on="spin", name="drive"))
 
-## Physics covered
+psi = ht.evolve(H, ht.ket("0"), np.linspace(0, 10, 201))
+population = ht.population("1", psi)
+```
 
-| Platform | Submodules | Demo |
-|---|---|---|
-| Trapped ions | `spin_boson`, `trapped_ion`, `molmer_sorensen`, `trap` (sideband/thermal physics) | [demos/05](demos/05_ms_two_qubit_gate.ipynb), [demos/07](demos/07_yb171_hyperfine_and_sidebands.ipynb) |
-| Atomic structure (hyperfine, Zeeman, dipole coupling) | `atomic`, `angular_momentum` | [demos/07](demos/07_yb171_hyperfine_and_sidebands.ipynb) |
-| Cavity/circuit QED | `spin_boson` (`jaynes_cummings`, `rabi`) | [demos/01](demos/01_jaynes_cummings_composition.ipynb) |
-| Optical tweezer arrays (Rydberg blockade) | `rydberg` | [demos/09](demos/09_rydberg_blockade.ipynb) |
-| NV centers (spin-1 ground state) | `spin_j`, `nv_center` | [demos/08](demos/08_nv_center_ground_state.ipynb) |
+> **API design draft:** this README describes the intended final ergonomics.
+> The proposed readout helpers called out below are not implemented yet.
 
-All of it sits on the same generic engine below — a new platform is a new submodule, not a
-fork of the solver.
+The package supplies the readable layer QuTiP deliberately does not: named
+subsystems, composable named Hamiltonian terms, approximation ladders, sequence
+instructions, and focused diagnostics.
 
 ## Install
 
-```
+```text
 pip install -e .
 ```
 
-## The hierarchy
+NumPy, SciPy, Matplotlib, and QuTiP 5.1 or newer are installed as dependencies.
+QuTiP is the only numerical evolution backend; it is compiled and called
+internally, so normal code does not handle `Qobj` or choose sparse storage.
 
-**You evolve a System.** That is the one sentence to remember. A `System` is anything that
-answers "what are the dynamics at time `t`?" — it implements `hamiltonian(t)` and/or
-`unitary(t)`. Nothing else is required.
+## Four moves
 
-The concrete `System` value is the composable way to build dynamics: write physics as a
-sum of named terms and it handles tensor bookkeeping, caching, and swapping. Closed-form
-and external providers are internal duck-typed implementation details, not public
-framework subclasses.
+### 1. Lay out the Hilbert space
 
-```mermaid
-%%{init: {"flowchart": {"rankSpacing": 50, "nodeSpacing": 40}}}%%
-flowchart TB
-    OP["<b>numpy array</b><br/>a Hamiltonian, a ket, a density matrix, a propagator."]
-    MODEL["<b>System</b> — the composable path<br/>
-    named groups of terms over a registry of subsystems, both dicts keyed by label.<br/>Group labels replace/retrieve/remove physics; subsystem labels fix the embedding order.<br/>Not a matrix — it builds H(t) on demand<br/><i>built by term() / jump() / pauli_sum() / driven_spins() ...</i>"]
-
-    OWN["<b>internal provider</b> — the implementation path for physics that isn't a sum of terms:<br/>a closed-form gate, a wrapper, a bridge<br/><i>ms_closed_form, TrotterizedSystem, as_system(Qobj)</i>"]
-
-    SYS["<b>System</b> - the concrete dynamics value<br/>named terms, hamiltonian(t), and optional jump_operators(t)<br/>"]
-
-    EVOALL["<b>Evolution</b> — every one works the same way<br/><b>you give it:</b> a System, a starting point, and optionally a start time<br/><b>you ask it:</b> state_at(t) for the answer at one time, or at every time in an array<br/>also report() for what the solve did, and trace_out(name) to discard a subsystem<br/>"]
-
-    subgraph EVO["pick the one matching your equation of motion"]
-        direction LR
-        E1["<b>HamiltonianEvolution</b><br/>i ψ' = H ψ<br/>—<br/>start from a state vector<br/>get back the state at t"]
-        E2["<b>UnitaryEvolution</b><br/>i U' = H U<br/>—<br/>start from just the dimension<br/>get back the propagator at t"]
-        E3["<b>DensityMatrixEvolution</b><br/>ρ(t) = U ρ₀ U†<br/>—<br/>start from a density matrix<br/>get back ρ at t, closed system"]
-        E4["<b>LindbladEvolution</b><br/>ρ' = −i[H,ρ] + Σ D[L]ρ<br/>—<br/>start from a density matrix<br/>get back ρ at t, with dissipation"]
-    end
-
-    OP --> MODEL
-    OP --> OWN
-    MODEL -- "satisfies" --> SYS
-    OWN -- "satisfies" --> SYS
-    SYS -- "is integrated by" --> EVOALL
-    EVOALL --> EVO
-```
-
-Internally a `System` stores each summand as a private `_Term`, because a coefficient that
-is `f(t)` can't be folded into a matrix until you know `t`. You never construct or see one.
-
-`System` enables easier construction with **subsystem names**. Two operators tagged to act on
-`"spin"` act on the same tensor factor, so `+` lines them up and identity-pads
-automatically. You never write `⊗ I` by hand, and no joint matrix exists until an evolution 
-asks for `H(t)`.
+Writing the subsystems first is the most grounded way to start a calculation:
 
 ```python
-atom = term(0.5 * w0 * sigma_z, on="spin", name="atom")
-mode = term(w * number_op,      on="mode", name="mode")
-jc   = plus_hc(term({"spin": sigma_plus, "mode": a}, coeff=g, name="jc"))  # g s+ a + h.c.
-H    = atom + mode + jc      # Jaynes–Cummings; names did the embedding
+N = 8
+subsystems = {"spin": 2, "motion": N}
+
+psi0 = ht.otimes(ht.ket("0"), ht.fock(0, N))
 ```
 
-## Extending it
+The dictionary fixes both dimensions and tensor-product order. It is useful
+throughout the calculation for embedding local operators, applying local
+unitaries, taking partial traces, and interpreting matrix indices. This
+explicit-first workflow is optional: a System can still infer the same registry
+from its named terms.
 
-Two ways to build a System:
-
-| Your physics is… | You write… | Examples in the package |
-|---|---|---|
-| a sum of named pieces | **a `System`** | `driven_spins`, `jaynes_cummings`, `pauli_sum`, `term`, `jump` |
-| closed-form or external dynamics | **an internal provider** | `ms_closed_form`, `TrotterizedSystem`, `as_system` |
-
-A common pattern for using `System` would be something like:
+### 2. Build and compose physical pieces
 
 ```python
-def my_drive(Omega, eps, delta) -> ht.System:
-    return (ht.term(0.5 * Omega * (1 + eps) * sigma_x, on="q", name="drive")
-            + ht.term(delta * sigma_z, on="q", name="detuning"))
+a = ht.annihilation(N)
+atom = ht.term(0.5 * 1.0 * ht.sigma_z, on="spin", name="atom")
+mode = ht.term(1.0 * (a.conj().T @ a), on="mode", name="mode")
+coupling = ht.plus_hc(
+    ht.term({"spin": ht.sigma_plus, "mode": a}, coeff=0.1, name="coupling")
+)
+
+# Starting with an empty System pins the declared dimensions and ordering.
+H = ht.System(subsystems) + atom + mode + coupling
+realized = ht.replace(H, coupling=noisy_coupling)
 ```
 
-Call it with different arguments to get a different System. You never mutate a system, which
-matters because an evolution freezes its System at binding and rejects later edits.
+Subsystem names perform the identity padding and tensor placement. Group names
+make physics replaceable without rebuilding the rest of the Hamiltonian.
+`System` values are immutable.
 
-When the physics isn't a sum of terms, or a Unitary of specific form, write the class:
-
-A shaped resonant pulse is the clearest case. Every `H(t) = (Ω(t)/2)σx` commutes with
-itself at different times, so the time-ordered exponential collapses to the **pulse area**
-— `U(t)` is closed-form and integrating an ODE for it would be wasted work. A term-built
-System is a sum and produces `H(t)`; closed-form providers remain internal.
+### 3. Evolve or run
 
 ```python
-from scipy.special import erf
+states = ht.evolve(H, psi0, times)
 
-class GaussianPulse:
-    """Resonant Gaussian pulse. All H(t) commute, so U depends only on the
-    accumulated area theta(t) = integral of Omega -- no ODE needed."""
-    def __init__(self, Omega0, sigma):
-        self.Omega0, self.sigma = Omega0, sigma
-        self.subsystems = {"q": 2}                  # opts into the truncation guard
-
-    def unitary(self, t=None):
-        area = 0.5 * self.Omega0 * self.sigma * np.sqrt(2 * np.pi) * \
-               (erf(t / (self.sigma * np.sqrt(2))) + 1)
-        return np.cos(area / 2) * np.eye(2) - 1j * np.sin(area / 2) * sigma_x
-
-ev = ht.UnitaryEvolution(GaussianPulse(Omega0=1.0, sigma=2.0), dim=2)
-ev.unitary_at(6.0)          # returned directly -- the ODE solver never runs
+# Keep an evolution when you want to ask for states repeatedly.
+ev = ht.HamiltonianEvolution(H, psi0)
+psi_t = ev.state_at(t)
+states = ev.state_at(times)
 ```
 
-Implementing `unitary(t)` instead of `hamiltonian(t)` is what tells the solver to skip the
-integration entirely. (The reverse doesn't work: `H → U` is always well-defined, but
-`U → H` needs a matrix log, which is branch-ambiguous.)
+Use a density matrix to select Lindblad evolution automatically when the
+System contains jump terms. `evolve(...)` is the short path and returns the
+answer directly. The longer-lived `HamiltonianEvolution`, `UnitaryEvolution`,
+`DensityMatrixEvolution`, and `LindbladEvolution` values retain `state_at(t)`
+and are useful for repeated queries or `report()`.
 
-Dissipation is the other case. Add `jump_operators(t)` and `LindbladEvolution` picks it up
-— a bath too large to model as a subsystem, with a rate you can make time-dependent:
+### 4. Read the answer as physics
+
+The public API should preserve the expressions a physicist would write on
+paper. This table is the target ergonomics for the final API. `element`,
+`population`, `overlap`, `distance`, `change_basis`, generalized `fidelity`,
+the general measurement forms, the ket-accepting form of `partial_trace`, the
+`on=` form of `embed`, and the operator-first forms of `apply_unitary` and
+`measure` are proposed here and are not implemented yet.
+
+| Operation | Pure state $\lvert\psi\rangle$ | Density matrix $\rho$ |
+| :--- | :--- | :--- |
+| **Represent a basis state** | $\lvert k\rangle$<br>`psi = ht.ket("1")` | $\lvert k\rangle\langle k\rvert$<br>`rho = ht.projector(ht.ket("1"))` |
+| **Represent a general state** | $\lvert\psi\rangle = \sum_i c_i \lvert i\rangle$<br>`psi = c0*ht.ket("0") + c1*ht.ket("1")` | $\rho = \sum_i p_i \lvert\psi_i\rangle\langle\psi_i\rvert$<br>`rho = p0*ht.projector(psi0) + p1*ht.projector(psi1)` |
+| **Coefficient or matrix element** | $c_0 = \langle0\vert\psi\rangle$<br>`c0 = psi[0]`<br>or `c0 = ht.element(psi, "0")` | $\rho_{01} = \langle0\vert\rho\vert1\rangle$<br>`rho01 = rho[0, 1]`<br>or `rho01 = ht.element(rho, "0", "1")`<br>For a pure state, $\rho_{01}=c_0c_1^*$. |
+| **Element of one subsystem** | A subsystem of an entangled ket generally has no ket of its own.<br>$\langle0\vert\rho_s\vert1\rangle$, where $\rho_s=\operatorname{Tr}_m(\lvert\psi\rangle\langle\psi\rvert)$<br>`coherence = ht.element(psi, "0", "1", on="spin", subsystems=subsystems)` | $\langle0\vert\rho_s\vert1\rangle$, where $\rho_s=\operatorname{Tr}_m(\rho)$<br>`coherence = ht.element(rho, "0", "1", on="spin", subsystems=subsystems)`<br>`p0 = ht.element(rho, "0", on="spin", subsystems=subsystems)` |
+| **Population in a basis state** | $\lvert c_k\rvert^2$<br>`p_k = abs(psi[k])**2`<br>or `p_k = ht.population("1", psi)` | $\rho_{kk}$<br>`p_k = rho[k, k].real`<br>or `p_k = ht.population("1", rho)` |
+| **Expectation value** | $\langle A\rangle = \langle\psi\vert A\vert\psi\rangle$<br>`mean_A = ht.expect(A, psi)` | $\langle A\rangle = \operatorname{Tr}(A\rho)$<br>`mean_A = ht.Tr(A @ rho)`<br>or `mean_A = ht.expect(A, rho)` |
+| **Apply a full-space unitary** | $\lvert\psi'\rangle = U\lvert\psi\rangle$<br>`psi_next = U @ psi`<br>or `psi_next = ht.apply_unitary(U, psi)` | $\rho' = U\rho U^\dagger$<br>`rho_next = U @ rho @ ht.dag(U)`<br>or `rho_next = ht.apply_unitary(U, rho)` |
+| **Apply a local unitary** | $U_s\lvert\psi\rangle$<br>`psi_next = ht.apply_unitary(U, psi, on="spin", subsystems=subsystems)` | $U_s\rho U_s^\dagger$<br>`rho_next = ht.apply_unitary(U, rho, on="spin", subsystems=subsystems)` |
+| **Embed a local operator** | $A_s = A\otimes I_m$<br>`A_spin = ht.embed(A, on="spin", subsystems=subsystems)`<br>`psi_next = A_spin @ psi` | $A_s = A\otimes I_m$<br>`A_spin = ht.embed(A, on="spin", subsystems=subsystems)`<br>`mean_A = ht.Tr(A_spin @ rho)` |
+| **Change basis** | If the columns of $V$ are the new basis, $\lvert\psi\rangle_{new}=V^\dagger\lvert\psi\rangle$<br>`psi_new = ht.dag(V) @ psi`<br>or `psi_new = ht.change_basis(V, psi)` | $\rho_{new}=V^\dagger\rho V$<br>`rho_new = ht.dag(V) @ rho @ V`<br>or `rho_new = ht.change_basis(V, rho)` |
+| **Combine subsystems** | $\lvert\psi_A\rangle\otimes\lvert\psi_B\rangle$<br>`psi = ht.otimes(psi_A, psi_B)` | $\rho_A\otimes\rho_B$<br>`rho = ht.otimes(rho_A, rho_B)` |
+| **Discard a subsystem** | $\rho_A = \operatorname{Tr}_B(\lvert\psi\rangle\langle\psi\rvert)$<br>`rho_A = ht.partial_trace(psi, subsystems, "B")` | $\rho_A = \operatorname{Tr}_B(\rho)$<br>`rho_A = ht.partial_trace(rho, subsystems, "B")` |
+| **Probability of an arbitrary state** | $\lvert\langle\phi\vert\psi\rangle\rvert^2$<br>`p_phi = ht.population(phi, psi)` | $\langle\phi\vert\rho\vert\phi\rangle$<br>`p_phi = ht.population(phi, rho)` |
+| **Projective measurement outcome** | $p=\langle\psi\vert P\vert\psi\rangle$, $\lvert\psi'\rangle=P\lvert\psi\rangle/\sqrt p$<br>`post, p = ht.measure(P, psi)` | $p=\operatorname{Tr}(P\rho)$, $\rho'=P\rho P/p$<br>`post, p = ht.measure(P, rho)`<br>Add `on=` and `subsystems=` for a local measurement. |
+| **POVM probabilities** | $p_k=\langle\psi\vert E_k\vert\psi\rangle$, $\sum_kE_k=I$<br>`probabilities = [ht.expect(E, psi) for E in effects]` | $p_k=\operatorname{Tr}(E_k\rho)$<br>`probabilities = [ht.Tr(E @ rho) for E in effects]`<br>The effects determine probabilities, not post-measurement states. |
+| **General measurement outcome** | $p_k=\lVert M_k\lvert\psi\rangle\rVert^2$, $\lvert\psi_k\rangle=M_k\lvert\psi\rangle/\sqrt{p_k}$<br>`post, p = ht.measure(M_k, psi)` | $p_k=\operatorname{Tr}(M_k^\dagger M_k\rho)$, $\rho_k=M_k\rho M_k^\dagger/p_k$<br>`post, p = ht.measure(M_k, rho)` |
+| **Overlap** | $\langle\phi\vert\psi\rangle$<br>`z = ht.overlap(phi, psi)` | $\operatorname{Tr}(\sigma\rho)$ (Hilbert--Schmidt overlap)<br>`z = ht.Tr(sigma @ rho)`<br>This is not the general mixed-state fidelity. |
+| **Fidelity** | $F=\lvert\langle\phi\vert\psi\rangle\rvert^2$<br>`F = ht.fidelity(phi, psi)` | $F=\left(\operatorname{Tr}\sqrt{\sqrt{\sigma}\rho\sqrt{\sigma}}\right)^2$<br>`F = ht.fidelity(sigma, rho)`<br>A ket may be used for either argument. |
+| **Distance** | $\sqrt{1-\lvert\langle\phi\vert\psi\rangle\rvert^2}$<br>`d = ht.distance(phi, psi)` | $\frac12\lVert\sigma-\rho\rVert_1$<br>`d = ht.distance(sigma, rho)` |
+| **Relative phase between states** | $\arg(\langle\phi\vert\psi\rangle)$<br>`phase = ht.relative_phase(phi, psi)` | There is no global phase to compare: $e^{i\theta}\lvert\psi\rangle$ gives the same $\rho$. |
+| **Relative phase of components** | $\arg(c_jc_k^*)$<br>`phase_jk = np.angle(c_j * c_k.conj())` | $\arg(\rho_{jk})$<br>`phase_jk = np.angle(rho[j, k])` |
+
+Literal linear algebra is preferred when it is already readable. A helper earns
+its place when it removes basis-index conversion, automatically embeds a local
+operator, or presents one physical operation consistently for kets and density
+matrices. In particular, `element(rho, "01", "10")` is the labelled-basis form
+of `rho[1, 2]`; it is not a wrapper object or a new representation.
+
+The proposed `element(state, row, col=None, *, on=None, subsystems=None)` accepts
+a flat integer index or a qubit bitstring as a basis selector. One selector
+means a ket coefficient, but a density-matrix diagonal element. Two selectors
+mean $\langle row\vert\rho\vert col\rangle$. With `on=`, the rest of the system
+is traced out first, so the result is always an element of the reduced density
+matrix; one selector is therefore a local population. An arbitrary-basis
+element remains ordinary algebra: `ht.dag(phi) @ rho @ chi`.
+
+Solver trajectories are arrays with one state per requested time. Accordingly,
+`ht.element(states, "0", "1")` returns the entire $\rho_{01}(t)$ trace, one
+complex number per time, rather than requiring a Python loop.
+
+Python binary literals are already integers, so `element(rho, 0b01, 0b10)` is
+just the readable binary spelling of `element(rho, 1, 2)`. They are not accepted
+by `ket`: the integer `0b10` has lost its width and could mean $\lvert10\rangle$,
+$\lvert010\rangle$, or Fock state 2. `ket("10")` preserves the intended qubit
+register and is the preferred spelling.
+
+`apply_unitary` is conjugation for every square operator, not only density
+matrices: `ht.apply_unitary(U, A)` means $UAU^\dagger$. The helper is most useful
+with `on=`; for full-space arrays, `U @ psi` and `U @ A @ ht.dag(U)` are usually
+clearer.
+
+Every public name in this table belongs at the package top level. Both
+`import htdse as ht` and `from htdse import *` expose the same physics vocabulary;
+adding a public helper also requires adding it to `htdse.__all__`.
+
+## Ion sequences
 
 ```python
-class Heating:
-    """Motional heating whose rate ramps during the gate."""
-    def __init__(self, n_max, gamma):
-        self.n_max, self.gamma = n_max, gamma
-        self.subsystems = {"mode": n_max + 1}
-        self._adag = creation(n_max)
+mode = ht.Mode(nu=20.0, eta=[0.2, 0.2], n_max=8, name="com")
+chain = ht.ion_chain([mode], 2)
 
-    def hamiltonian(self, t):
-        return np.zeros((self.n_max + 1,) * 2, dtype=complex)   # pure decoherence
+seq = ht.sequence(
+    ht.rx("q0", np.pi / 2, start=0.0, duration=1.0),
+    ht.rz("q1", np.pi / 4, at=1.0),       # virtual frame update
+    ht.rxx(("q0", "q1"), np.pi / 2,
+           start=1.0, duration=2 * np.pi, mode="com"),
+)
 
-    def jump_operators(self, t):
-        return [np.sqrt(self.gamma * t) * self._adag]           # sqrt(rate) convention
+psi0 = ht.otimes(ht.ket("00"), ht.fock(0, 8))
+states = ht.run(chain, seq, psi0, ht.sequence_times(seq), verbose=False)
 ```
 
-Two optional hints — `breakpoints()` and `piecewise_constant` — tell the solver where
-`H(t)` jumps and whether it is constant between jumps. Declaring both buys exact
-propagation instead of adaptive stepping, which is how `TrotterizedSystem` works.
+`tone`, `wait`, and `sequence` are immutable data. Physical `rx`, `ry`, and
+`rxx` are conveniences that compile to ordinary tones; `rz` is a virtual frame
+change. `ideal_rx`, `ideal_ry`, `ideal_rxx`, and `ms_unitary` describe explicit
+outcome-level comparisons.
 
-Providers implement only the methods they need; the solver consumes them through a
-private duck-typed capability check. Users compose ordinary `System` values with free
-functions such as `ht.replace`, `ht.without`, and `ht.group`.
+Detuning follows one convention throughout:
+`detuning = omega_laser - omega_0`, so red detuning is negative.
 
-Leveraging the conveniences baked into the `System` value when composing physics is easy:
-- **Sparce Matrices**: The solver branches on whether the matrix *you returned* is sparse, so return a CSR and you get the sparce path.
-- **Truncation Guard**: expose a `subsystems` dict (as `ms_closed_form` does) or pass `subsystems=` to the evolution.
+## Numerical guardrails
 
-When writing an internal provider, it does not have the term algebra: `+`,
-`ht.replace()`, `ht.without()`, automatic identity padding, and the materialization cache. For
-a closed-form `U(t)` most of that is moot anyway, and `embed()` is still available as a standalone utility function.
+- Hamiltonians are checked for Hermiticity.
+- Invalid density matrices and closed solvers given jump operators are refused.
+- Declared breakpoints are included in every solve.
+- Population at a truncated Fock-space ceiling raises `TruncationWarning`.
+- Evolution objects reject mutation of private dynamics providers after binding.
+- `report()` identifies QuTiP, tolerances, solved range, truncation, trace, and
+  unitarity diagnostics.
 
-Everything in `submodules/` is written against this same protocol, with no privileged
-access. `molmer_sorensen` is the largest example if you want a template. Submodule contributions are encouraged!
+Storage is internal. A large, structurally sparse System gives one suggestion;
+`.sparse()` is the single optional override, and results remain NumPy arrays.
 
-## Guards
+For advanced QuTiP-only operations such as `mcsolve` and `steadystate`,
+`htdse.interop.qutip.to_qutip` exposes the already compiled System. This is an
+escape hatch, not a second backend.
 
-The solver refuses several things instead of silently returning a plausible wrong answer:
-a non-Hermitian `H`, an invalid `rho0`, a dissipative system handed to a closed-system
-solver, integration across a declared discontinuity, extrapolation past solved data, and a
-system mutated after binding. Population reaching the top of a truncated ladder raises a
-`TruncationWarning`. See [GUIDE.md](GUIDE.md#checking-a-run).
-
-## Where to go
-
-| You want | Go to |
-|---|---|
-| The five-step workflow, and a reference while writing code | [GUIDE.md](GUIDE.md) |
-| The physics and numerics under the hood | [PHYSICS.md](PHYSICS.md) |
-| Worked examples, increasing complexity | [demos/](demos/) |
-| To use QuTiP for part of the job | `htdse.interop.qutip` — [GUIDE.md](GUIDE.md#talking-to-qutip) |
-| What a function does exactly | its docstring — written as the reference manual |
-
-**Package layout**
-
-```
-src/htdse/
-  core/            # concrete System, terms, and the four evolution
-                   # classes, embed/partial_trace, compare_over, converged,
-                   # truncation guard, plotting, the READ layer (project/closure/
-                   # generator/paulis/max_eigenphase/show/expect)
-  interop/         # optional bridges (qutip), imported lazily, never a dependency
-  submodules/      # reusable physics: spin, harmonic_oscillator, trotter, wigner,
-                   # spin_boson (general tone/mode drive), trapped_ion (IonChain),
-                   # molmer_sorensen (MS gate recipes on top of spin_boson),
-                   # angular_momentum (Clebsch-Gordan/Wigner-6j), trap (Lamb-Dicke
-                   # sideband physics), atomic (hyperfine/Zeeman/dipole structure),
-                   # spin_j (general spin-J operators), nv_center (NV ground-state
-                   # physics), rydberg (tweezer-array Rydberg interactions)
-  magnus.py        # magnus / magnus_pauli: what a pulse effectively generates
-  util.py          # otimes, ket, fidelity, sampled_pulse, ...
-demos/             # worked notebooks (start at 00)
-tests/             # python tests/test_htdse.py ; python tests/test_molmer_sorensen.py
-```
-
-## Acknowledgments
-
-`angular_momentum.py`'s Wigner-6j/Clebsch-Gordan implementation, and the
-sideband/thermal-flopping formulas in `trap.py` and the
-hyperfine/Zeeman/dipole matrix builders in `atomic.py`, are ported from
-[AMO.jl](https://github.com/yuyichao/AMO.jl), a Julia package by Yichao Yu.
-See those modules' docstrings for what was ported directly versus
-re-derived, and the differences (dropped Julia-performance machinery, a
-from-scratch Clebsch-Gordan/Wigner-6j replacing AMO.jl's dependency on the
-external `WignerSymbols.jl` package) from the original.
+See [GUIDE.md](GUIDE.md) for the API walkthrough and [PHYSICS.md](PHYSICS.md)
+for the approximations and equations implemented by the physics modules.

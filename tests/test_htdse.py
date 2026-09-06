@@ -579,7 +579,7 @@ with quiet():
     U_s = UnitaryEvolution(Hs_td, dim=H.dim).unitary_at(1.3)
 check("sparse UnitaryEvolution == dense", np.allclose(np.asarray(U_s), np.asarray(U_d), atol=1e-6))
 
-# Trotter over a sparse model exercises the expm_multiply (no dense eigh) path
+# Trotter over a sparse System exercises QuTiP's diagonal path.
 ramp_model = (term(sigma_x, on="q", coeff=lambda t: 1 - np.clip(t / T, 0, 1), name="x")
               + term(sigma_z, on="q", coeff=lambda t: np.clip(t / T, 0, 1), name="z"))
 with quiet():
@@ -587,7 +587,7 @@ with quiet():
                                   ket("0")).state_at(T)
     trot_s = HamiltonianEvolution(TrotterizedSystem(ramp_model.sparse(), 0, T, 40),
                                   ket("0")).state_at(T)
-check("sparse expm_multiply path == dense eigh path",
+check("sparse and dense QuTiP diagonal paths agree",
       np.allclose(np.asarray(trot_s), np.asarray(trot_d), atol=1e-10))
 with quiet():
     Uev_s = UnitaryEvolution(TrotterizedSystem(ramp_model.sparse(), 0, T, 40), dim=2)
@@ -696,17 +696,18 @@ with quiet():
     _rev = HamiltonianEvolution(H, psi0)
     _rev.state_at(np.linspace(0, 5.0, 20))
 _r = _rev.report()
-check("report is a dict AND prints", _r["rhs_evals"] > 0 and "rhs_evals" in str(_r))
+check("report is a dict AND prints",
+      _r["solver_runs"] > 0 and "solver_runs" in str(_r))
 check("report knows the solved range and segments",
       _r["segments"] >= 1 and "0" in _r["solved_range"])
-check("report names the propagation method", "RK45" in _r["propagation"])
+check("report names the production backend", "QuTiP" in _r["propagation"])
 check("report recognizes immutable Systems", "immutable System" in _r["mutation_guard"])
 check("report carries per-subsystem truncation populations",
       set(_r["truncation"]) == {"mode"} and _r["truncation"]["mode"] < 1e-6)
 # an untouched evolution reports honestly rather than solving to fill the table
 _r0 = HamiltonianEvolution(H, psi0, verbose=False).report()
 check("report on an unsolved evolution solves nothing",
-      _r0["solved_range"] == "nothing solved yet" and _r0["rhs_evals"] == 0
+      _r0["solved_range"] == "nothing solved yet" and _r0["solver_runs"] == 0
       and "truncation" not in _r0)
 # the exact piecewise-constant path is reported as exact, not as an ODE
 with quiet():
@@ -744,84 +745,34 @@ with quiet():
 check("report gives the trace for a density matrix",
       abs(_lv.report()["trace"] - 1.0) < 1e-8)
 
-print("== qutip interop (skipped if qutip is absent) ==")
-try:
-    import qutip as _qt
-except ImportError:
-    print("  -- qutip not installed, skipping (it is not an htdse dependency)")
-else:
-    from htdse.interop.qutip import to_qobj, from_qobj, to_qutip, as_system
-    _n = 8
-    _a, _nop = annihilation(_n), number_operator(_n)
-    _H = (term(0.65 * sigma_z, on="spin", name="atom") + term(1.3 * _nop, on="mode", name="mode")
-          + plus_hc(term({"spin": sigma_plus, "mode": _a}, coeff=0.11, name="jc")))
-    _psi0 = np.kron(ket("0"), fock(0, _n))
-    _ts = np.linspace(0, 2 * np.pi / 0.11, 40)
-    with quiet():
-        _ref = np.abs(HamiltonianEvolution(_H, _psi0).state_at(_ts) @ _psi0.conj()) ** 2
-
-    # registry -> dims, in registry ORDER (the whole contract of the bridge)
-    check("to_qobj carries the registry into qutip dims",
-          to_qobj(np.asarray(_H.hamiltonian(0.0)), _H.subsystems).dims == [[2, _n + 1]] * 2)
-    check("to_qobj gives a ket the ket dims",
-          to_qobj(_psi0, _H.subsystems).dims == [[2, _n + 1], [1, 1]])
-    _arr, _reg = from_qobj(to_qobj(_psi0, _H.subsystems), names=list(_H.subsystems))
-    check("Qobj round trip is exact and keeps the registry",
-          np.allclose(_arr.ravel(), _psi0) and _reg == _H.subsystems)
-    try:
-        to_qobj(_psi0, {"spin": 2, "mode": 99})   # registry that fits nothing
-        check("to_qobj rejects a registry that doesn't fit the array", False)
-    except ValueError:
-        check("to_qobj rejects a registry that doesn't fit the array", True)
-
-    # a static System becomes a bare Qobj; qutip's solve matches htdse's
-    _Hq, _c = to_qutip(_H)
-    check("static System -> bare Qobj, no c_ops", isinstance(_Hq, _qt.Qobj) and _c == [])
-    _r = _qt.sesolve(_Hq, to_qobj(_psi0, _H.subsystems), _ts)
-    _qp = np.abs(np.array([s.full().ravel() for s in _r.states]) @ _psi0.conj()) ** 2
-    check("qutip sesolve == htdse on the same composed System",
-          np.max(np.abs(_qp - _ref)) < 1e-5)
-
-    # a time-dependent System becomes qutip's NATIVE [H0, [H1, f]] list -- its fast
-    # path -- not a callable returning a Qobj (which is its slow path)
-    _Ht = _H + term(0.3 * sigma_x, on="spin", name="drive", coeff=lambda t: np.cos(1.7 * t))
-    _Hq2, _ = to_qutip(_Ht)
-    check("time-dependent System -> qutip's native [H0, [H1, f]] form",
-          isinstance(_Hq2, list) and isinstance(_Hq2[1], list)
-          and isinstance(_Hq2[1][0], _qt.Qobj) and callable(_Hq2[1][1]))
-    _r2 = _qt.sesolve(_Hq2, to_qobj(_psi0, _Ht.subsystems), _ts)
-    _q2 = np.abs(np.array([s.full().ravel() for s in _r2.states]) @ _psi0.conj()) ** 2
-    with quiet():
-        _h2 = np.abs(HamiltonianEvolution(_Ht, _psi0).state_at(_ts) @ _psi0.conj()) ** 2
-    check("qutip == htdse on a time-dependent System", np.max(np.abs(_q2 - _h2)) < 1e-5)
-
-    # jumps -> c_ops
-    _Ho = _H + jump(_a, on="mode", coeff=np.sqrt(0.3), name="decay")
-    _, _c3 = to_qutip(_Ho)
-    check("jumps become qutip c_ops", len(_c3) == 1 and _c3[0].dims == [[2, _n + 1]] * 2)
-
-    # qutip -> htdse. A plain Qobj is itself callable in qutip 5, so the wrapper
-    # must dispatch on QobjEvo, not on callable().
-    _Hq0 = _qt.Qobj(np.asarray(_H.hamiltonian(0.0)), dims=[[2, _n + 1]] * 2)
-    with quiet():
-        _pm = HamiltonianEvolution(as_system(_Hq0, subsystems=_H.subsystems),
-                                   _psi0).state_at(_ts)
-    check("as_system(Qobj) evolves in htdse",
-          np.max(np.abs(np.abs(_pm @ _psi0.conj()) ** 2 - _ref)) < 1e-9)
-    with quiet():
-        _pe = HamiltonianEvolution(as_system(_qt.QobjEvo([_Hq0]), subsystems=_H.subsystems),
-                                   _psi0).state_at(_ts)
-    check("as_system(QobjEvo) evolves in htdse",
-          np.max(np.abs(np.abs(_pe @ _psi0.conj()) ** 2 - _ref)) < 1e-9)
-
-    # and htdse's own guards still apply to a qutip-sourced system
-    _Lq = _qt.Qobj(np.sqrt(0.3) * np.kron(I2, _a), dims=[[2, _n + 1]] * 2)
-    _md = as_system(_Hq0, subsystems=_H.subsystems, jumps=[_Lq])
-    try:
-        HamiltonianEvolution(_md, _psi0)
-        check("closed solver still refuses a dissipative qutip system", False)
-    except ValueError:
-        check("closed solver still refuses a dissipative qutip system", True)
+print("== QuTiP production backend ==")
+import qutip as _qt
+from htdse.interop.qutip import to_qobj, to_qutip
+_n = 8
+_a, _nop = annihilation(_n), number_operator(_n)
+_H = (term(0.65 * sigma_z, on="spin", name="atom")
+      + term(1.3 * _nop, on="mode", name="mode")
+      + plus_hc(term({"spin": sigma_plus, "mode": _a}, coeff=0.11, name="jc")))
+_psi0 = np.kron(ket("0"), fock(0, _n))
+_ts = np.linspace(0, 2 * np.pi / 0.11, 40)
+with quiet():
+    _backend_states = HamiltonianEvolution(_H, _psi0).state_at(_ts)
+check("backend remains NumPy at the public boundary",
+      isinstance(_backend_states, np.ndarray))
+check("backend keeps named tensor dimensions internally",
+      to_qobj(_psi0, _H.subsystems).dims == [[2, _n + 1], [1, 1]])
+_Hq, _c = to_qutip(_H)
+check("static System compiles once to a QuTiP operator",
+      isinstance(_Hq, _qt.Qobj) and _c == [])
+_Ht = _H + term(0.3 * sigma_x, on="spin", name="drive",
+                coeff=lambda t: np.cos(1.7 * t))
+_Hq2, _ = to_qutip(_Ht)
+check("time dependence uses QuTiP's native scalar-coefficient form",
+      isinstance(_Hq2, _qt.QobjEvo))
+_Ho = _H + jump(_a, on="mode", coeff=np.sqrt(0.3), name="decay")
+_, _c3 = to_qutip(_Ho)
+check("jump terms compile to QuTiP collapse operators",
+      len(_c3) == 1 and _c3[0].dims == [[2, _n + 1]] * 2)
 
 print("== bra, hc, show, plot_matrix ==")
 _psi00 = otimes(ket("0"), ket("0"))
@@ -996,6 +947,16 @@ check("ion_chain, tone, wait, and sequence are exported",
 check("tone and sequence data are immutable",
       _tone4.start == 1.0 and _tone4.duration == 2.0
       and _seq4.instructions == (_wait4, _tone4))
+_caller_amplitude = np.array([0.4])
+_snapshotted_tone = ht.tone("q0", 0.0, amplitude=_caller_amplitude,
+                            duration=1.0, orders=(0,))
+_caller_amplitude[0] = 99.0
+_snapshotted_system = ht.compile_tones(
+    _chain4, ht.sequence(_snapshotted_tone))
+check("tone compilation never retains caller-owned arrays",
+      _snapshotted_tone.amplitude == (0.4,)
+      and np.allclose(_snapshotted_system.hamiltonian(0.5),
+                      embed(0.2 * sigma_x, _chain4.subsystems, "q0")))
 check("compiled tone includes its chain registry and breakpoints",
       _compiled4.subsystems == _chain4.subsystems
       and np.allclose(_compiled4.breakpoints(), [0.0, 1.0, 3.0]))
