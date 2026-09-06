@@ -1,8 +1,8 @@
 """The target-vs-realized comparison loop, as one free function.
 
 No generic `.compare()` method hides which metric is being computed -- you
-pass the fidelity function explicitly (`fidelity`, `process_fidelity`,
-`density_fidelity`, or your own). `compare_over` only removes the boilerplate
+pass the fidelity function explicitly (`fidelity`, `process_fidelity`, or your
+own). `compare_over` only removes the boilerplate
 of walking two evolutions over a time grid and applying embed/trace adapters.
 """
 import numpy as np
@@ -28,7 +28,7 @@ def compare_over(ts, target, realized, metric,
     target, realized: evolutions (anything with `.state_at(t)`) or callables
               t -> state/operator.
     metric:   explicit comparison function of two states/operators, e.g.
-              `fidelity`, `process_fidelity`, `density_fidelity`.
+              `fidelity`, `process_fidelity`.
     *_adapter: optional per-side function applied to each state before the
               metric -- this is where the embed/trace_out physics decision
               lives (e.g. `lambda rho: partial_trace(rho, dims, ("mode",))`,

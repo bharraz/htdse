@@ -12,8 +12,26 @@ def projector(state: np.ndarray) -> np.ndarray:
     return np.outer(state, state.conj())  # |state><state|
 
 def fidelity(state1: np.ndarray, state2: np.ndarray) -> float:
-    """Calculate quantum state fidelity |⟨ψ₁|ψ₂⟩|²."""
-    return np.abs(np.vdot(state1, state2))**2  # |<1|2>|^2
+    """Quantum-state fidelity for any pair of kets or density matrices.
+
+    For two kets this is |<psi|phi>|^2. If either state is mixed, this is the
+    squared Uhlmann fidelity (so the pure/mixed case is <psi|rho|psi>).
+    """
+    a, b = np.asarray(state1, dtype=complex), np.asarray(state2, dtype=complex)
+    if a.ndim == b.ndim == 1:
+        return float(np.abs(np.vdot(a, b)) ** 2)
+    if a.ndim == 1 and b.ndim == 2:
+        return float(np.clip(np.real(np.vdot(a, b @ a)), 0.0, 1.0))
+    if a.ndim == 2 and b.ndim == 1:
+        return float(np.clip(np.real(np.vdot(b, a @ b)), 0.0, 1.0))
+    if a.ndim != 2 or b.ndim != 2 or a.shape != b.shape or a.shape[0] != a.shape[1]:
+        raise ValueError("fidelity needs two kets or square density matrices of equal dimension")
+    evals, evecs = np.linalg.eigh((a + a.conj().T) / 2)
+    sqrt_a = (evecs * np.sqrt(np.clip(evals, 0.0, None))) @ evecs.conj().T
+    middle = sqrt_a @ b @ sqrt_a
+    middle = (middle + middle.conj().T) / 2
+    roots = np.sqrt(np.clip(np.linalg.eigvalsh(middle), 0.0, None))
+    return float(np.clip(np.sum(roots) ** 2, 0.0, 1.0))
 
 def process_fidelity(U1: np.ndarray, U2: np.ndarray) -> float:
     """Process fidelity between two propagators: |Tr(U1^dagger U2)|^2 / d^2.
@@ -30,15 +48,6 @@ def Tr(op: np.ndarray) -> complex:
     a formula (e.g. population = Tr(Proj @ rho)) rather than np.trace(op)
     inline -- the whole point of this module is physics-equation clarity."""
     return np.trace(op)
-
-def density_fidelity(rho: np.ndarray, psi: np.ndarray) -> float:
-    """Fidelity between a density matrix and a pure state: <psi|rho|psi>.
-
-    The general (Uhlmann) mixed-state fidelity needs a matrix square root;
-    when one operand is pure it reduces exactly to this expectation value,
-    so no sqrtm is needed here.
-    """
-    return float(np.real(psi.conj() @ rho @ psi))  # <psi|rho|psi>
 
 def relative_phase(state1: np.ndarray, state2: np.ndarray):
     """Relative phase arg(<state1|state2>) = arg(sum_i conj(state1_i) state2_i).

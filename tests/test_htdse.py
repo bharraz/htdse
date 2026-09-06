@@ -16,8 +16,9 @@ import htdse as ht
 from htdse import (System, Unitary, term, jump, plus_hc, hc, replace, without, group,
                    HamiltonianEvolution, UnitaryEvolution, DensityMatrixEvolution,
                    LindbladEvolution, evolve, propagator, embed, partial_trace, compare_over,
-                   apply_unitary, measure, Tr, otimes, ket, bra, fidelity, process_fidelity,
-                   density_fidelity, quiet, dag, SparseSuggestion, show, project_block,
+                   apply_unitary, change_basis, measure, Tr, otimes, ket, bra,
+                   fidelity, process_fidelity, element, population, overlap, distance,
+                   quiet, dag, SparseSuggestion, show, project_block,
                    closure, generator, paulis, max_eigenphase, expect)
 from htdse.core.plotting import (plot_populations, plot_matrix,
                                  plot_phases, plot_adiabatic_populations)
@@ -367,7 +368,7 @@ with quiet():
     joint = HamiltonianEvolution(atom + term(0.0 * nop, on="mode", name="m"),
                                  np.kron(ket("0"), fock(0, n_max)))
     tgt = HamiltonianEvolution(term(0.5 * w0 * sigma_z, on="spin"), ket("0"))
-    Fa = compare_over([0.5, 1.0], tgt, joint, metric=lambda p, r: density_fidelity(r, p),
+    Fa = compare_over([0.5, 1.0], tgt, joint, metric=lambda p, r: fidelity(r, p),
                       realized_adapter=lambda ps: partial_trace(
                           np.outer(ps, ps.conj()), joint.subsystems, ("mode",)))
 check("compare_over with trace adapter", np.allclose(Fa, 1, atol=1e-8))
@@ -622,35 +623,80 @@ _dims = {"A": 2, "B": 2}
 _psi = ket("01")  # |0>_A |1>_B
 
 check("apply: unitary on a subsystem of a ket == embed @ psi",
-      np.allclose(sub_apply(_psi, _Had, _dims, "A"), embed(_Had, _dims, "A") @ _psi))
+      np.allclose(sub_apply(_Had, _psi, _dims, "A"), embed(_Had, _dims, "A") @ _psi))
 check("apply_unitary is exported and embeds local operators",
-      np.allclose(apply_unitary(_psi, _Had, subsystems=_dims, on="A"),
+      np.allclose(apply_unitary(_Had, _psi, subsystems=_dims, on="A"),
                   embed(_Had, _dims, "A") @ _psi))
 _rho = np.outer(_psi, _psi.conj())
 _U = np.asarray(embed(_Had, _dims, "A"))
 check("apply: on a density matrix == U rho U^dag",
-      np.allclose(sub_apply(_rho, _Had, _dims, "A"), _U @ _rho @ _U.conj().T))
+      np.allclose(sub_apply(_Had, _rho, _dims, "A"), _U @ _rho @ _U.conj().T))
+check("apply: arbitrary operator is conjugated",
+      np.allclose(apply_unitary(_Had, sigma_z), _Had @ sigma_z @ _Had.conj().T))
 check("Tr reads the matrix trace",
       np.isclose(Tr(_rho), np.trace(_rho)))
 
 _bell = (ket("00") + ket("11")) / np.sqrt(2)
-_rhoB, _p = measure(_bell, _dims, "A", ket("0"))
+_local_P0 = np.outer(ket("0"), ket("0").conj())
+_post, _p = measure(_local_P0, _bell, subsystems=_dims, on="A")
 _P0 = np.asarray(embed(np.outer(ket("0"), ket("0").conj()), _dims, "A"))
 check("project: Born probability == Tr(P rho)",
       np.isclose(_p, np.real(_bell.conj() @ _P0 @ _bell)))
+_rhoB = partial_trace(_post, _dims, "A")
 check("project: reduces to conditional state on the rest (Bell, A=0 -> B in |0>)",
       np.allclose(_rhoB, np.outer(ket("0"), ket("0").conj())))
-_rhoB2, _p2 = measure(np.outer(_bell, _bell.conj()), _dims, "A", ket("0"))
+_post2, _p2 = measure(_local_P0, np.outer(_bell, _bell.conj()),
+                      subsystems=_dims, on="A")
+_rhoB2 = partial_trace(_post2, _dims, "A")
 check("project: ket input and density-matrix input agree",
       np.allclose(_rhoB, _rhoB2) and np.isclose(_p, _p2))
 _xp = (ket("0") + ket("1")) / np.sqrt(2)
-_rhoB3, _p3 = measure(otimes(_xp, ket("0")), _dims, "A", _xp)
+_Px = np.outer(_xp, _xp.conj())
+_post3, _p3 = measure(_Px, otimes(_xp, ket("0")), subsystems=_dims, on="A")
+_rhoB3 = partial_trace(_post3, _dims, "A")
 check("project: +/- basis measurement by passing |+> directly (p=1)", np.isclose(_p3, 1.0))
 try:
-    measure(otimes(ket("0"), ket("0")), _dims, "A", ket("1"))  # A is |0>, measure on |1>
+    measure(np.outer(ket("1"), ket("1").conj()),
+            otimes(ket("0"), ket("0")), subsystems=_dims, on="A")
     check("project: zero-probability outcome raises", False)
 except ValueError:
     check("project: zero-probability outcome raises", True)
+_M0 = np.diag([1.0, np.sqrt(0.5)])
+_general_post, _general_p = measure(_M0, _xp)
+check("general measurement uses the selected Kraus operator",
+      np.isclose(_general_p, 0.75)
+      and np.isclose(np.linalg.norm(_general_post), 1.0)
+      and np.allclose(_general_post, (_M0 @ _xp) / np.sqrt(0.75)))
+
+print("== physics-readable state operations ==")
+_phase_state = (ket("0") + 1j * ket("1")) / np.sqrt(2)
+_phase_rho = np.outer(_phase_state, _phase_state.conj())
+check("element reads ket coefficients", np.isclose(element(_phase_state, "1"), 1j / np.sqrt(2)))
+check("element reads rho_01 = c0 c1*", np.isclose(element(_phase_rho, "0", "1"), -0.5j))
+check("element accepts ordinary integer indices", np.isclose(element(_phase_rho, 0, 1), -0.5j))
+_bell_rho = np.outer(_bell, _bell.conj())
+check("element(on=) reads a reduced density element",
+      np.isclose(element(_bell, "0", on="A", subsystems=_dims), 0.5))
+_rho_path = np.stack([_phase_rho, np.outer(ket("0"), ket("0").conj())])
+check("element reads a whole trajectory", np.allclose(element(_rho_path, "0", "1"), [-0.5j, 0]))
+check("population accepts labels for ket and rho",
+      np.isclose(population("1", _phase_state), 0.5)
+      and np.isclose(population("1", _phase_rho), 0.5))
+check("population accepts an arbitrary target ket",
+      np.isclose(population(_xp, _phase_state), 0.5))
+check("overlap is the complex ket overlap", np.isclose(overlap(_xp, _phase_state), (1 + 1j) / 2))
+check("fidelity handles mixed states", np.isclose(fidelity(np.eye(2) / 2, ket("0")), 0.5))
+check("distance is trace distance for pure states", np.isclose(distance(ket("0"), ket("1")), 1.0))
+_V = np.column_stack((_xp, (ket("0") - ket("1")) / np.sqrt(2)))
+check("change_basis maps columns of V to coordinate basis",
+      np.allclose(change_basis(_V, _xp), ket("0")))
+check("partial_trace accepts a ket directly",
+      np.allclose(partial_trace(_bell, _dims, "A"), np.eye(2) / 2))
+check("embed exposes the physics-readable on= keyword",
+      np.allclose(embed(_Had, on="A", subsystems=_dims), _U))
+check("new physics vocabulary is exported at package top level",
+      all(name in ht.__all__ for name in
+          ("element", "population", "overlap", "distance", "change_basis")))
 
 print("== converged() ==")
 _calls = []
@@ -888,7 +934,7 @@ with quiet():
 check("evolve() on a ket matches HamiltonianEvolution.state_at", np.allclose(_psi_facade, _psi_ref))
 
 with quiet():
-    _U_facade = propagator(_Hf, 2, np.pi)
+    _U_facade = propagator(_Hf, np.pi)
     _U_ref = UnitaryEvolution(_Hf, dim=2).unitary_at(np.pi)
 check("propagator() matches UnitaryEvolution.unitary_at", np.allclose(_U_facade, _U_ref))
 

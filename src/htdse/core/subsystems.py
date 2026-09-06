@@ -18,7 +18,7 @@ def _check_dims(rho, dims: dict) -> None:
 
 
 def partial_trace(rho, subsystems: dict, trace_out: tuple) -> np.ndarray:
-    """Partial trace of a density matrix over named subsystems.
+    """Partial trace of a ket or density matrix over named subsystems.
 
     H = H_1 (x) ... (x) H_N, `subsystems` = {name: dim(H_i)} in tensor-product order.
     Reshapes rho into a 2N-index tensor (one row + one column index per
@@ -26,13 +26,17 @@ def partial_trace(rho, subsystems: dict, trace_out: tuple) -> np.ndarray:
 
         rho_kept[m,n] = sum_a rho[(...,m,...,a,...), (...,n,...,a,...)]
 
-    Accepts a single density matrix (D, D) or a batched trajectory
-    (..., D, D) -- e.g. the (n_times, D, D) stack an evolution's `state_at(ts)`
-    produces -- tracing every entry in one shot.
+    Accepts a ket (D,), density matrix (D, D), or a batched trajectory of
+    either. Kets are converted to |psi><psi|, since a reduced state is
+    generically mixed even when the joint state is pure.
 
     `trace_out` is a name or an iterable of names.
     """
     rho = np.asarray(rho, dtype=complex)
+    if rho.ndim == 1:
+        rho = np.outer(rho, rho.conj())
+    elif rho.ndim == 2 and rho.shape[0] != rho.shape[1]:
+        rho = np.einsum("ni,nj->nij", rho, rho.conj())
     _check_dims(rho, subsystems)
     # a bare "mode" would otherwise iterate into 'm','o','d','e'
     trace_out = (trace_out,) if isinstance(trace_out, str) else tuple(trace_out)
@@ -60,7 +64,7 @@ def partial_trace(rho, subsystems: dict, trace_out: tuple) -> np.ndarray:
     return np.asarray(tensor.reshape(*batch, kept_dim, kept_dim))  # back to flat matrices
 
 
-def embed(op, subsystems: dict, subsystem) -> np.ndarray:
+def embed(op, subsystems: dict, on) -> np.ndarray:
     """Lift `op` into the full joint space defined by `subsystems` ({name: dim},
     in tensor-product order), acting as identity everywhere it isn't defined.
 
@@ -79,7 +83,7 @@ def embed(op, subsystems: dict, subsystem) -> np.ndarray:
     out; sparse in -> CSR out.
     """
     names = list(subsystems.keys())
-    involved = (subsystem,) if isinstance(subsystem, str) else tuple(subsystem)
+    involved = (on,) if isinstance(on, str) else tuple(on)
     for nm in involved:
         if nm not in subsystems:
             raise KeyError(f"unknown subsystem {nm!r}; registry has {names}")
@@ -145,24 +149,24 @@ def _permute_factors_sparse(big, dims: dict, order_now: list):
     return _sp.coo_matrix((big.data, (new_rows, new_cols)), shape=(D, D)).tocsr()
 
 
-def apply_unitary(state, operator, subsystems=None, on=None) -> np.ndarray:
-    """Apply a local operator `op` on named subsystem(s) `on` to a ket or a
-    density matrix, leaving the other subsystems alone.
+def apply_unitary(operator, state, subsystems=None, on=None) -> np.ndarray:
+    """Apply U to a ket, density matrix, or operator.
 
     `on` is a name or a tuple of names; `subsystems` is the {name: dim} registry
     (e.g. an evolution's `.subsystems`). A local operator is lifted with
     `embed`, so you never write the identity padding. For a full-space
     operator, omit `subsystems` and `on`:
 
-        ket:            |psi>  ->  U|psi>
-        density matrix: rho    ->  U rho U^dagger,     U = embed(op, dims, on)
+        ket:       |psi> -> U|psi>
+        matrix:    A     -> U A U^dagger,     U = embed(op, dims, on)
 
-    Dispatched on shape (1-D -> ket, 2-D -> density matrix). Example: a
-    Hadamard on one ancilla is `apply_unitary(rho, H, subsystems, "a1")`; on
-    both at once, `apply_unitary(rho, otimes(H, H), subsystems, ("a1", "a2"))`.
+    Dispatched on shape (1-D -> ket, square 2-D -> conjugation). Example: a
+    Hadamard on one ancilla is
+    `apply_unitary(H, rho, subsystems, "a1")`; on both at once, use
+    `apply_unitary(otimes(H, H), rho, subsystems, ("a1", "a2"))`.
     """
-    arr = np.asarray(state)
     U = np.asarray(operator)
+    arr = np.asarray(state)
     if subsystems is not None:
         if on is None:
             raise ValueError("local operator application needs `on=` naming its subsystem(s)")
@@ -177,7 +181,7 @@ def apply_unitary(state, operator, subsystems=None, on=None) -> np.ndarray:
         return np.asarray(U @ arr)
     if arr.ndim == 2 and arr.shape[0] == arr.shape[1]:
         if arr.shape[0] != U.shape[0]:
-            raise ValueError(f"density-matrix dimension {arr.shape[0]} does not match unitary dimension {U.shape[0]}")
+            raise ValueError(f"matrix dimension {arr.shape[0]} does not match unitary dimension {U.shape[0]}")
         return np.asarray(U @ arr @ U.conj().T)
     if arr.ndim == 2:
         if arr.shape[1] != U.shape[0]:
@@ -185,38 +189,56 @@ def apply_unitary(state, operator, subsystems=None, on=None) -> np.ndarray:
         return np.asarray(arr @ U.T)
     if arr.ndim == 3:
         if arr.shape[-2:] != U.shape:
-            raise ValueError(f"density-matrix batch shape {arr.shape[-2:]} does not match unitary shape {U.shape}")
+            raise ValueError(f"matrix batch shape {arr.shape[-2:]} does not match unitary shape {U.shape}")
         return np.asarray(U @ arr @ U.conj().T)
-    raise ValueError(f"state must be a ket, density matrix, or batch thereof; got shape {arr.shape}")
+    raise ValueError(f"target must be a ket, square matrix, or batch thereof; got shape {arr.shape}")
 
 
-def measure(state, subsystems: dict, on, onto):
-    """Projective measurement of subsystem(s) `on` onto the pure state `onto`,
-    reduced onto the remaining subsystems. Returns (reduced_rho, probability).
+def change_basis(basis, state) -> np.ndarray:
+    """Coordinates of a ket or matrix in a new orthonormal basis.
 
-    Accepts a ket OR a density matrix, and ALWAYS returns a density matrix --
-    a measured-and-reduced state is generically mixed. `onto` is a state on
-    the `on` factor(s), so measuring in the +/- basis is just
-    `onto = otimes(|+>, |+>)` (no basis change needed). The probability is the
-    Born rule Tr(P rho), P = embed(|onto><onto|, subsystems, on).
-
-        ket:            phi = P|psi>;  p = <phi|phi>;  reduce |phi><phi|
-        density matrix: rho -> P rho P;  p = Tr(P rho);  reduce
-    then partial-trace out `on`, leaving the conditional state on the rest.
+    The columns of `basis` are the new basis vectors in the old coordinates:
+    |psi> -> V^dagger |psi>, and A -> V^dagger A V.
     """
-    onto = np.asarray(onto, dtype=complex)
-    onto = onto / np.linalg.norm(onto)
-    P = embed(np.outer(onto, onto.conj()), subsystems, on)   # |onto><onto| embedded
+    V = np.asarray(basis, dtype=complex)
+    if V.ndim != 2 or V.shape[0] != V.shape[1]:
+        raise ValueError(f"basis must be a square matrix, got shape {V.shape}")
+    if not np.allclose(V.conj().T @ V, np.eye(V.shape[0]), atol=1e-8):
+        raise ValueError("basis columns must be orthonormal")
+    return apply_unitary(V.conj().T, state)
+
+
+def measure(operator, state, subsystems=None, on=None):
+    """Condition on one projective or general measurement outcome.
+
+    `operator` is the selected measurement/Kraus operator M. Returns
+    `(post_state, probability)` using p=<psi|M^dag M|psi> for a ket or
+    p=Tr(M^dag M rho) for a density matrix. A projector is the special case
+    M=P. For a local measurement, pass `on=` and the subsystem registry; the
+    returned state remains on the full Hilbert space and can be reduced with
+    `partial_trace` if desired.
+    """
+    M = np.asarray(operator, dtype=complex)
+    if subsystems is not None:
+        if on is None:
+            raise ValueError("local measurement needs `on=` naming its subsystem(s)")
+        M = embed(M, subsystems, on)
+    elif on is not None:
+        raise ValueError("`on=` requires a `subsystems=` registry")
+    if M.ndim != 2 or M.shape[0] != M.shape[1]:
+        raise ValueError(f"measurement operator must be square, got shape {M.shape}")
     arr = np.asarray(state, dtype=complex)
-    if arr.ndim == 1:                       # ket
-        phi = P @ arr
-        p = float(np.real(np.vdot(phi, phi)))
-        collapsed = np.outer(phi, phi.conj())
-    else:                                   # density matrix
-        collapsed = P @ arr @ P
+    if arr.ndim == 1:
+        collapsed = M @ arr
+        p = float(np.real(np.vdot(collapsed, collapsed)))
+        normalizer = np.sqrt(p)
+    elif arr.ndim == 2 and arr.shape[0] == arr.shape[1]:
+        collapsed = M @ arr @ M.conj().T
         p = float(np.real(np.trace(collapsed)))
+        normalizer = p
+    else:
+        raise ValueError("measure needs one ket or density matrix, not a trajectory")
     if p < 1e-12:
         raise ValueError(f"measurement outcome has ~zero probability ({p:.3g}); "
                          "cannot condition on it")
-    reduced = partial_trace(np.asarray(collapsed / p), subsystems, on)
-    return reduced, p
+    return np.asarray(collapsed / normalizer), p

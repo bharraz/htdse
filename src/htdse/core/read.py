@@ -24,10 +24,12 @@ effective Hamiltonian once the motion has (approximately) returned:
     print(max_eigenphase(H_eff, T))                   # trust the row above this?
 """
 import numpy as np
+from numbers import Integral
 from scipy.linalg import logm
 
 from .subsystems import _total_dim
 from ..magnus import pauli_decompose
+from ..util import fidelity
 
 paulis = pauli_decompose  # same function, read-layer name for discoverability
 
@@ -146,6 +148,135 @@ def expect(operator, state) -> complex | np.ndarray:
             raise ValueError(f"expect density batch shape {state.shape[-2:]} does not match operator shape {operator.shape}")
         return np.einsum("ij,nji->n", operator, state)
     raise ValueError(f"expect needs a ket, density matrix, or batch thereof, got shape {state.shape}")
+
+
+def _basis_index(selector, dim: int) -> int:
+    if isinstance(selector, str):
+        if not selector or any(bit not in "01" for bit in selector):
+            raise ValueError(f"basis label must be a qubit bitstring, got {selector!r}")
+        if 2 ** len(selector) != dim:
+            raise ValueError(f"basis label {selector!r} describes dimension {2 ** len(selector)}, "
+                             f"but the state dimension is {dim}")
+        return int(selector, 2)
+    if isinstance(selector, Integral) and not isinstance(selector, (bool, np.bool_)):
+        index = int(selector)
+        if 0 <= index < dim:
+            return index
+        raise IndexError(f"basis index {index} outside dimension {dim}")
+    raise TypeError("basis selector must be an integer index or qubit bitstring")
+
+
+def element(state, row, col=None, *, on=None, subsystems=None):
+    """A ket coefficient or density-matrix element, optionally on a subsystem.
+
+    `element(psi, "01")` is <01|psi>; `element(rho, "01", "10")` is
+    <01|rho|10>. One selector on a density matrix means its diagonal element.
+    With `on=`, all other named subsystems are traced out first, so the result
+    is always a reduced-density-matrix element. Trajectories return one value
+    per time.
+    """
+    state = np.asarray(state, dtype=complex)
+    if on is not None:
+        if subsystems is None:
+            raise ValueError("`on=` requires a `subsystems=` registry")
+        from .subsystems import partial_trace
+        kept = (on,) if isinstance(on, str) else tuple(on)
+        unknown = [name for name in kept if name not in subsystems]
+        if unknown:
+            raise KeyError(f"unknown subsystem(s) {unknown}; registry has {list(subsystems)}")
+        trace_out = tuple(name for name in subsystems if name not in kept)
+        state = partial_trace(state, subsystems, trace_out)
+    elif subsystems is not None:
+        raise ValueError("`subsystems=` is only needed with `on=`")
+
+    if state.ndim == 1:
+        i = _basis_index(row, state.shape[0])
+        if col is None:
+            return complex(state[i])
+        j = _basis_index(col, state.shape[0])
+        return complex(state[i] * state[j].conj())
+    if state.ndim == 2 and state.shape[0] == state.shape[1]:
+        i = _basis_index(row, state.shape[0])
+        j = i if col is None else _basis_index(col, state.shape[1])
+        return complex(state[i, j])
+    if state.ndim == 2:
+        i = _basis_index(row, state.shape[1])
+        if col is None:
+            return np.asarray(state[:, i])
+        j = _basis_index(col, state.shape[1])
+        return np.asarray(state[:, i] * state[:, j].conj())
+    if state.ndim == 3 and state.shape[-2] == state.shape[-1]:
+        i = _basis_index(row, state.shape[-1])
+        j = i if col is None else _basis_index(col, state.shape[-1])
+        return np.asarray(state[:, i, j])
+    raise ValueError(f"element needs a ket, density matrix, or trajectory, got {state.shape}")
+
+
+def population(target, state, *, on=None, subsystems=None):
+    """Population of a basis label or normalized target ket in `state`."""
+    state = np.asarray(state, dtype=complex)
+    if on is not None:
+        if subsystems is None:
+            raise ValueError("`on=` requires a `subsystems=` registry")
+        from .subsystems import partial_trace
+        kept = (on,) if isinstance(on, str) else tuple(on)
+        unknown = [name for name in kept if name not in subsystems]
+        if unknown:
+            raise KeyError(f"unknown subsystem(s) {unknown}; registry has {list(subsystems)}")
+        trace_out = tuple(name for name in subsystems if name not in kept)
+        state = partial_trace(state, subsystems, trace_out)
+    if isinstance(target, (str, Integral)) and not isinstance(target, (bool, np.bool_)):
+        value = element(state, target)
+        is_ket = state.ndim == 1 or (state.ndim == 2 and state.shape[0] != state.shape[1])
+        result = np.abs(value) ** 2 if is_ket else np.real(value)
+        return float(result) if np.ndim(result) == 0 else np.asarray(result)
+
+    target = np.asarray(target, dtype=complex)
+    if target.ndim != 1:
+        raise ValueError("population target must be a basis label, index, or ket")
+    if not np.isclose(np.linalg.norm(target), 1.0, atol=1e-8):
+        raise ValueError("population target ket must be normalized")
+    if state.shape[-1] != target.shape[0]:
+        raise ValueError("target ket and state dimensions do not match")
+    if state.ndim == 1:
+        return float(np.abs(np.vdot(target, state)) ** 2)
+    if state.ndim == 2 and state.shape[0] == state.shape[1]:
+        return float(np.real(np.vdot(target, state @ target)))
+    if state.ndim == 2:
+        return np.abs(state @ target.conj()) ** 2
+    if state.ndim == 3:
+        return np.real(np.einsum("i,nij,j->n", target.conj(), state, target))
+    raise ValueError(f"population needs a ket, density matrix, or trajectory, got {state.shape}")
+
+
+def overlap(state1, state2):
+    """<state1|state2> for kets; Tr(state1^dag state2) for matrices."""
+    a, b = np.asarray(state1, dtype=complex), np.asarray(state2, dtype=complex)
+    if a.shape != b.shape:
+        raise ValueError(f"overlap needs matching shapes, got {a.shape} and {b.shape}")
+    if a.ndim == 1:
+        return complex(np.vdot(a, b))
+    if a.ndim == 2 and a.shape[0] == a.shape[1]:
+        return complex(np.vdot(a, b))
+    if a.ndim == 2:
+        return np.einsum("ni,ni->n", a.conj(), b)
+    if a.ndim == 3:
+        return np.einsum("nij,nij->n", a.conj(), b)
+    raise ValueError("overlap needs kets, matrices, or matching trajectories")
+
+
+def distance(state1, state2) -> float:
+    """Trace distance, reducing to sqrt(1-F) for two pure states."""
+    a, b = np.asarray(state1, dtype=complex), np.asarray(state2, dtype=complex)
+    if a.ndim == b.ndim == 1:
+        return float(np.sqrt(max(0.0, 1.0 - fidelity(a, b))))
+    if a.ndim == 1:
+        a = np.outer(a, a.conj())
+    if b.ndim == 1:
+        b = np.outer(b, b.conj())
+    if a.ndim != 2 or b.ndim != 2 or a.shape != b.shape or a.shape[0] != a.shape[1]:
+        raise ValueError("distance needs two kets or density matrices of equal dimension")
+    return float(0.5 * np.linalg.svd(a - b, compute_uv=False).sum())
 
 
 def show(H, t: float = 0.0, tol: float = 1e-10):

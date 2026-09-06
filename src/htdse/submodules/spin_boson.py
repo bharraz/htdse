@@ -21,7 +21,8 @@ THE LADDER (do not re-derive; this is what every builder here implements):
                   (nu_m+nu_m') and DIFFERENCE (nu_m-nu_m') of the two mode
                   frequencies. Not optional: a shared drive tone genuinely
                   couples two modes together at this order, and dropping it
-                  would silently miss that (see PHYSICS.md section 8).
+                  would silently miss that (see this module's approximation
+                  notes below).
     lamb_dicke=None: no expansion -- exact, see the closed-form gate below
 
 `rwa=` drops everything except the single resonant term of each tone: the bare

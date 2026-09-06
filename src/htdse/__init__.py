@@ -23,15 +23,17 @@ from .core.unitary import Unitary
 from .core.evolution import (HamiltonianEvolution, UnitaryEvolution,
                              DensityMatrixEvolution, LindbladEvolution,
                              evolve, propagator)
-from .core.subsystems import embed, partial_trace, apply_unitary, measure
+from .core.subsystems import embed, partial_trace, apply_unitary, change_basis, measure
 from .core.compare import compare_over
 from .core.convergence import converged
-from .core.read import show, project_block, closure, generator, paulis, max_eigenphase, expect
+from .core.read import (show, project_block, closure, generator, paulis,
+                        max_eigenphase, expect, element, population, overlap,
+                        distance)
 from .core.plotting import (plot_populations, plot_eigenspectrum, plot_matrix,
                             plot_phases, plot_adiabatic_populations)
 from .magnus import magnus, magnus_pauli, pauli_decompose
 from .util import (MAG_THRESHOLD, dag, otimes, ket, bra, projector, fidelity,
-                   process_fidelity, density_fidelity, relative_phase,
+                   process_fidelity, relative_phase,
                    binary_to_index, index_to_binary, sampled_pulse, Tr)
 
 # The physics vocabulary. Each submodule is reachable by name (`ht.spin`, ...)
@@ -71,12 +73,14 @@ __all__ = [
     "System", "Unitary", "term", "jump", "plus_hc", "hc", "replace", "without", "group", "SparseSuggestion",
     "HamiltonianEvolution", "UnitaryEvolution", "DensityMatrixEvolution",
     "LindbladEvolution", "evolve", "propagator",
-    "embed", "partial_trace", "apply_unitary", "measure", "compare_over", "converged",
+    "embed", "partial_trace", "apply_unitary", "change_basis", "measure",
+    "compare_over", "converged",
     "magnus", "magnus_pauli", "pauli_decompose",
     "MAG_THRESHOLD", "dag", "otimes", "ket", "bra", "projector", "fidelity",
-    "process_fidelity", "density_fidelity", "relative_phase",
+    "process_fidelity", "relative_phase",
     "binary_to_index", "index_to_binary", "sampled_pulse",
-    "show", "project_block", "closure", "generator", "paulis", "max_eigenphase", "expect", "Tr",
+    "show", "project_block", "closure", "generator", "paulis", "max_eigenphase",
+    "expect", "element", "population", "overlap", "distance", "Tr",
     "plot_populations", "plot_eigenspectrum", "plot_matrix",
     "plot_phases", "plot_adiabatic_populations",
     # submodules, reachable by name
