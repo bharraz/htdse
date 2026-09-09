@@ -267,6 +267,38 @@ class System:
             return
         raise AttributeError("System values are immutable; build a transformed System")
 
+    def _is_time_dependent(self):
+        contributions = list(self.groups.values()) + list(self.jumps.values())
+        return any(isinstance(item, _OperatorTerm) or callable(item.coeff)
+                   for items in contributions for item in items)
+
+    def __eq__(self, other):
+        """Compare the numerical physics of two time-independent Systems.
+
+        Group names and sparse storage are construction details, so they do
+        not affect equality. Arbitrary functions of time cannot be proven
+        equal from Python callables; compare ``H1.H(t)`` and ``H2.H(t)`` at
+        the physically relevant times instead.
+        """
+        if not isinstance(other, System):
+            return NotImplemented
+        if self is other:
+            return True
+        if tuple(self.subsystems.items()) != tuple(other.subsystems.items()):
+            return False
+        if self._is_time_dependent() or other._is_time_dependent():
+            raise TypeError(
+                "cannot prove equality of time-dependent Systems; compare "
+                "H1.H(t) and H2.H(t) at the times relevant to the experiment")
+        if not np.allclose(self.hamiltonian(0), other.hamiltonian(0),
+                           rtol=1e-12, atol=1e-12):
+            return False
+        left_jumps = self.jump_operators(0)
+        right_jumps = other.jump_operators(0)
+        return (len(left_jumps) == len(right_jumps)
+                and all(np.allclose(a, b, rtol=1e-12, atol=1e-12)
+                        for a, b in zip(left_jumps, right_jumps)))
+
     def H(self, t):
         """Paper-style alias for the Hamiltonian accessor."""
         return self.hamiltonian(t)
@@ -574,13 +606,88 @@ class System:
 
     # ---- inspection ------------------------------------------------------
 
+    def _pauli_expression(self):
+        """A compact named Pauli expression when that representation is cheap."""
+        if (self._is_time_dependent() or self.jumps or not self.subsystems
+                or any(d != 2 for d in self.subsystems.values()) or self.dim > 32):
+            return None
+        # Local import avoids making the core System layer depend on spin.py
+        # during module initialization.
+        from ..magnus import pauli_decompose
+        coeffs = pauli_decompose(self.hamiltonian(0), tol=1e-10)
+        if not coeffs:
+            return "0"
+        names = tuple(self.subsystems)
+        pieces = []
+        for pauli, coeff in sorted(coeffs.items(), key=lambda item: -abs(item[1])):
+            operator = " ".join(f"{p}{name}" for p, name in zip(pauli, names)
+                                if p != "I") or "I"
+            value = float(coeff.real) if abs(coeff.imag) < 1e-10 else coeff
+            if np.isclose(value, 1):
+                piece = operator
+            elif np.isclose(value, -1):
+                piece = f"-{operator}"
+            elif isinstance(value, float):
+                piece = f"{value:g} {operator}"
+            else:
+                piece = f"({value:g}) {operator}"
+            pieces.append(piece)
+        return " + ".join(pieces).replace(" + -", " - ")
+
+    def __str__(self):
+        subs = " ⊗ ".join(f"{name}:{dim}" for name, dim in self.subsystems.items())
+        expression = self._pauli_expression()
+        if expression is not None:
+            storage = "; sparse" if self.is_sparse else ""
+            return f"System({subs}{storage})\nH = {expression}"
+
+        properties = []
+        if self._is_time_dependent():
+            properties.append("time-dependent")
+        if self.is_sparse:
+            properties.append("sparse")
+        suffix = f"; {', '.join(properties)}" if properties else ""
+        lines = [f"System({subs or 'no subsystems'}{suffix})"]
+
+        def describe(groups, automatic_prefix):
+            descriptions = []
+            anonymous = 0
+            for name, items in groups.items():
+                is_automatic = (name.startswith(automatic_prefix)
+                                and name[len(automatic_prefix):].isdigit())
+                if is_automatic:
+                    anonymous += len(items)
+                else:
+                    count = len(items)
+                    descriptions.append(name if count == 1 else f"{name} ({count} terms)")
+            if anonymous:
+                descriptions.append(
+                    f"{anonymous} anonymous term{'s' if anonymous != 1 else ''}")
+            return descriptions
+
+        h_groups = describe(self.groups, "term")
+        lines.append("H = 0" if not h_groups else "H:\n  " + "\n  ".join(h_groups))
+        jump_groups = describe(self.jumps, "jump")
+        if jump_groups:
+            lines.append("jumps:\n  " + "\n  ".join(jump_groups))
+        return "\n".join(lines)
+
     def __repr__(self):
         subs = ", ".join(f"{n}:{d}" for n, d in self.subsystems.items())
-        gs = ", ".join(f"{k}[{len(v)}]" for k, v in self.groups.items())
-        js = ", ".join(f"{k}[{len(v)}]" for k, v in self.jumps.items())
-        parts = [f"subsystems=({subs})", f"terms=({gs})"]
-        if js:
-            parts.append(f"jumps=({js})")
+        named_groups = [(k, len(v)) for k, v in self.groups.items()
+                        if not (k.startswith("term") and k[4:].isdigit())]
+        anonymous_terms = sum(len(v) for k, v in self.groups.items()
+                              if k.startswith("term") and k[4:].isdigit())
+        descriptions = [f"{k} ({n} term{'s' if n != 1 else ''})"
+                        for k, n in named_groups]
+        if anonymous_terms:
+            descriptions.append(
+                f"{anonymous_terms} anonymous term{'s' if anonymous_terms != 1 else ''}")
+        parts = [f"subsystems=({subs})",
+                 f"H=({', '.join(descriptions) or '0'})"]
+        if self.jumps:
+            jump_count = sum(len(v) for v in self.jumps.values())
+            parts.append(f"jumps={jump_count}")
         if self.is_sparse:
             parts.append("sparse")
         return f"System({', '.join(parts)})"

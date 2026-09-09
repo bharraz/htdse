@@ -280,29 +280,70 @@ def distance(state1, state2) -> float:
 
 
 def show(H, t: float = 0.0, tol: float = 1e-10):
-    """Print H(t) readably instead of a raw ndarray repr: a Pauli-coefficient
-    table when dim = 2^n (via `paulis`), otherwise the rounded matrix with
-    near-zero entries cleaned to exactly 0.
+    """Print H(t) readably instead of a raw ndarray repr.
+
+    A System is shown in a named Pauli basis only when every registered
+    subsystem is two-dimensional. This deliberately does not infer "qubits"
+    from the total dimension: a four-level oscillator is still an oscillator.
+    Small non-Pauli operators are printed as matrices; larger ones are shown
+    through their largest nonzero basis-state matrix elements.
 
     H: a System (its `.hamiltonian(t)` is called) or a plain array --
     either way you get a look at the actual numbers without materializing
     and formatting it by hand first."""
-    M = H.hamiltonian(t) if hasattr(H, "hamiltonian") else H
+    is_system = hasattr(H, "hamiltonian")
+    subsystems = getattr(H, "subsystems", None) if is_system else None
+    M = H.hamiltonian(t) if is_system else H
     M = np.asarray(M, dtype=complex)
     d = M.shape[0]
     n = round(np.log2(d)) if d > 0 else 0
-    if d > 0 and 2 ** n == d:
+    pauli_basis = (bool(subsystems) and all(dim == 2 for dim in subsystems.values())
+                   if is_system else d > 0 and 2 ** n == d)
+    if pauli_basis:
         coeffs = paulis(M, tol=tol)
         if not coeffs:
             print(f"H(t={t}) = 0   ({d}x{d})")
             return
-        print(f"H(t={t})   ({d}x{d}, Pauli basis)")
+        basis_note = "named two-level Pauli basis" if is_system else "Pauli basis; dimensions inferred"
+        print(f"H(t={t})   ({d}x{d}, {basis_note})")
         for p, c in sorted(coeffs.items(), key=lambda kv: -abs(kv[1])):
             line = f"{c.real:+.5f}" if abs(c.imag) < tol else f"{c:+.5f}"
-            print(f"  {p:<8s} {line}")
+            if is_system:
+                label = " ".join(f"{op}{name}" for op, name in zip(p, subsystems)
+                                 if op != "I") or "I"
+            else:
+                label = p
+            print(f"  {label:<16s} {line}")
         return
-    print(f"H(t={t})   ({d}x{d})")
+
+    registry = " ⊗ ".join(f"{name}:{dim}" for name, dim in (subsystems or {}).items())
+    heading = f"H(t={t})   ({d}x{d}{'; ' + registry if registry else ''})"
     Mr = np.round(M, 6)
     Mr[np.abs(Mr) < tol] = 0
-    with np.printoptions(suppress=True, linewidth=120):
-        print(Mr)
+    if d <= 8 or not subsystems:
+        print(heading)
+        with np.printoptions(suppress=True, linewidth=120):
+            print(Mr)
+        return
+
+    rows, cols = np.nonzero(np.abs(M) >= tol)
+    entries = [(row, col, M[row, col]) for row, col in zip(rows, cols)]
+    entries.sort(key=lambda entry: -abs(entry[2]))
+    shown = entries[:32]
+    qualifier = "nonzero" if len(entries) <= len(shown) else "largest nonzero"
+    print(f"{heading}, {qualifier} matrix elements")
+
+    names = tuple(subsystems)
+    dims = tuple(subsystems.values())
+
+    def basis_label(index):
+        coordinates = np.unravel_index(index, dims)
+        return ", ".join(f"{name}={value}" for name, value in zip(names, coordinates))
+
+    for row, col, value in shown:
+        number = f"{value.real:+.6g}" if abs(value.imag) < tol else f"{value:+.6g}"
+        print(f"  <{basis_label(row)}|H|{basis_label(col)}> = {number}")
+    if len(entries) > len(shown):
+        print(f"  ... {len(entries) - len(shown)} smaller nonzero elements not shown")
+    elif not entries:
+        print("  0")

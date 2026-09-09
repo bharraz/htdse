@@ -344,6 +344,27 @@ expected_p = (0.5 * np.kron(sigma_x, sigma_x) + 0.3 * np.kron(sigma_z, I2)
 check("pauli_sum parses and materializes", np.allclose(hp.hamiltonian(0), expected_p))
 check("pauli_term product on one qubit",
       np.allclose(pauli_term("X0Y0").hamiltonian(0), sigma_x @ sigma_y))
+named_paulis = pauli_sum("0.5 Xr1 Xq2 + 0.3 Zr1 - Zq2")
+check("pauli strings accept arbitrary named subsystems",
+      named_paulis.subsystems == {"r1": 2, "q2": 2}
+      and np.allclose(named_paulis.hamiltonian(0), expected_p))
+check("repeated named Pauli labels multiply on one subsystem",
+      np.allclose(pauli_term("Xspin Yspin").hamiltonian(0), sigma_x @ sigma_y))
+check("static System equality compares physics rather than anonymous groups",
+      pauli_term("Xr1 Xa1") + pauli_term("Xr1 Xa1")
+      == 2 * pauli_term("Xr1 Xa1"))
+_printed_pauli = str(pauli_term("Xr1 Xa1") + pauli_term("Xr1 Xa1"))
+check("printing a small spin System uses named Pauli notation",
+      "H = 2 Xr1 Xa1" in _printed_pauli and "term" not in _printed_pauli)
+
+try:
+    _ = pauli_term("Xspin", coeff=lambda t: t) == pauli_term("Xspin", coeff=lambda t: t)
+except TypeError:
+    _dynamic_equality_guard = True
+else:
+    _dynamic_equality_guard = False
+check("time-dependent System equality refuses an unprovable comparison",
+      _dynamic_equality_guard)
 
 # regression: pauli_term(..., n_qubits=) widening used to APPEND the seed registry
 # (h + seed), so a term touching a high qubit index came back with that qubit's
@@ -847,10 +868,20 @@ check("hc(h) is just h.dag(): h + hc(h) == plus_hc(h)",
 
 with redirect_stdout(io.StringIO()) as _buf:
     show(term(0.5 * sigma_z, on="q") + term(0.3 * sigma_x, on="q"))
-check("show() on a qubit-only System prints the Pauli table", "Z" in _buf.getvalue())
+check("show() on a two-level System prints named Pauli terms",
+      "Zq" in _buf.getvalue() and "named two-level Pauli basis" in _buf.getvalue())
 with redirect_stdout(io.StringIO()) as _buf2:
     show(np.diag([1.0, 2.0]).astype(complex))
-check("show() on a non-2^n array falls back to the matrix", "2x2" in _buf2.getvalue())
+check("show() can infer a Pauli basis only for a metadata-free array",
+      "dimensions inferred" in _buf2.getvalue())
+with redirect_stdout(io.StringIO()) as _buf3:
+    show(term(np.diag(np.arange(4)), on="motion", name="mode"))
+check("show() does not mistake a four-level mode for two qubits",
+      "Pauli" not in _buf3.getvalue() and "motion:4" in _buf3.getvalue())
+with redirect_stdout(io.StringIO()) as _buf4:
+    show(term(np.diag(np.arange(10)), on="motion", name="mode"))
+check("show() labels large motional matrices in their physical basis",
+      "<motion=9|H|motion=9>" in _buf4.getvalue())
 
 _ax = plot_matrix(term(0.5 * sigma_x, on="q").hamiltonian(0), kind="abs")
 check("plot_matrix runs (abs)", _ax is not None)

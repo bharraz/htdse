@@ -43,8 +43,9 @@ from .util import (MAG_THRESHOLD, dag, otimes, ket, bra, projector, fidelity,
 from .submodules import (spin, harmonic_oscillator, spin_boson, trapped_ion,
                          molmer_sorensen, trotter, wigner, trap, atomic,
                          angular_momentum, spin_j, nv_center, rydberg)
-from .submodules.spin import (sigma_x, sigma_y, sigma_z, I2, sigma_plus,
-                              sigma_minus, PAULIS, pauli_term, pauli_sum)
+from .submodules.spin import (sigma_x, sigma_y, sigma_z, I2, hadamard,
+                              sigma_plus, sigma_minus, PAULIS, pauli_term,
+                              pauli_sum)
 from .submodules.harmonic_oscillator import (annihilation, creation, number_operator,
                                              ladder_operators, fock, thermal,
                                              ThermalMotionalDecoherence)
@@ -88,7 +89,7 @@ __all__ = [
     "molmer_sorensen", "trotter", "wigner", "trap", "atomic", "angular_momentum",
     "spin_j", "nv_center", "rydberg",
     # the physics vocabulary, flattened
-    "sigma_x", "sigma_y", "sigma_z", "I2", "sigma_plus", "sigma_minus",
+    "sigma_x", "sigma_y", "sigma_z", "I2", "hadamard", "sigma_plus", "sigma_minus",
     "PAULIS", "pauli_term", "pauli_sum",
     "annihilation", "creation", "number_operator", "ladder_operators", "fock",
     "thermal", "ThermalMotionalDecoherence",

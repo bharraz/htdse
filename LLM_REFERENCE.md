@@ -97,7 +97,9 @@
 - `process_fidelity(U, V)` — normalized unitary process fidelity.
 - `compare_over(ts, target, realized, metric, target_adapter=None,
   realized_adapter=None)` — compare trajectories.
-- `show(H, t=0, tol=1e-10)` — readable Pauli decomposition or matrix.
+- `show(H, t=0, tol=1e-10)` — named Pauli decomposition for registered
+  two-level subsystems; otherwise a small matrix or labeled dominant basis
+  transitions for larger operators.
 - `project_block(U, subsystems, on, state=0)` — fixed-subsystem block.
 - `closure(M)` — smallest singular value; one means a closed projected block.
 - `generator(M, T)` — effective traceless Hermitian generator from matrix log.
@@ -125,9 +127,13 @@
 
 ## Spin and harmonic oscillator
 
-- `sigma_x`, `sigma_y`, `sigma_z`, `I2`, `sigma_plus`, `sigma_minus`, `PAULIS`.
-- `pauli_term(spec, coeff=1, name=None, n_qubits=None, frame=None, prefix="q")`.
-- `pauli_sum(spec, n_qubits=None, frame=None, prefix="q")`.
+- `sigma_x`, `sigma_y`, `sigma_z`, `I2`, `hadamard`, `sigma_plus`,
+  `sigma_minus`, `PAULIS`.
+- `pauli_term(spec, coeff=1, name=None, n_qubits=None, frame=None, prefix="q")` —
+  accepts compact numbered strings (`"X0X1"`) or whitespace-delimited subsystem
+  names (`"Xr1 Xq2"`).
+- `pauli_sum(spec, n_qubits=None, frame=None, prefix="q")` — sums the same
+  numbered or named Pauli terms.
 - `spin_operators(J)`, `raising_lowering(J)`; `ht.spin_j.identity(J)` remains
   namespaced.
 - `annihilation(n_max)`, `creation(n_max)`, `number_operator(n_max)`,

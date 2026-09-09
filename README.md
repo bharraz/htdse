@@ -89,6 +89,14 @@ coupling = ht.term({"spin": ht.sigma_plus, "motion": a}, coeff=g)  # g σ+ ⊗ a
 joint = ht.term(A_ab, on=("a", "b"), dims={"a": 2, "b": 3})       # general Aab
 ```
 
+For spin-$1/2$ systems, Pauli shorthand can use the same physical subsystem
+names. Spaces mark the boundary between names:
+
+```python
+interaction = ht.pauli_term("Xr1 Xq2", coeff=J)  # J X_r1 X_q2
+fields = ht.pauli_sum("0.3 Zr1 - 0.2 Zq2")
+```
+
 The optional `frame=` tag documents the frame of a term and warns if terms
 tagged with different frames are later combined.
 
@@ -145,6 +153,24 @@ d = H.dim                      # total Hilbert-space dimension
 edges = H.breakpoints()        # declared discontinuity times
 H_sparse = H.sparse()          # same physics; sparse inside QuTiP
 ```
+
+For a small time-independent two-level System, `print(H)` writes the
+Hamiltonian directly in named Pauli notation, such as `H = 2 Xr1 Xa1`.
+General and time-dependent Systems instead list their named physical
+contributions. Anonymous internal IDs are never part of either display.
+
+`ht.show(H, t)` shows the actual Hamiltonian at a chosen time. It uses named
+Pauli notation only when every registered subsystem is two-dimensional; a
+motional truncation is not mistaken for qubits merely because its dimension
+is a power of two. Small general operators print as matrices, while larger
+ones print their largest nonzero elements with labels such as
+`<spin=0, motion=2|H|spin=1, motion=3>`.
+
+`H1 == H2` compares the materialized physics of time-independent Systems, so
+algebraically different constructions such as `H + H` and `2 * H` compare
+equal. Equality of arbitrary time-dependent callables is not mathematically
+decidable; in that case it raises and asks you to compare `H1.H(t)` and
+`H2.H(t)` at the relevant times.
 
 `H.subsystems` exposes the ordered registry. `repr(H)` summarizes its named
 Hamiltonian and jump groups. `.sparse()` changes only internal solver storage;
